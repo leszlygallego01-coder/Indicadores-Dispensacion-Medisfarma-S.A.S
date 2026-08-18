@@ -22,8 +22,19 @@ const firebaseConfig = {
   messagingSenderId: "947919909003",
   appId: "1:947919909003:web:5f9328c7e28ccf10b1e5c4"
 };
-firebase.initializeApp(firebaseConfig);
-const dbFirestore = firebase.firestore();
+let dbFirestore = null;
+try {
+  if (typeof firebase !== 'undefined' && firebase.initializeApp) {
+    firebase.initializeApp(firebaseConfig);
+    dbFirestore = firebase.firestore();
+    console.log('[Init] Firebase Firestore inicializado correctamente.');
+  } else {
+    console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
+  }
+} catch (e) {
+  console.error('[Init] Error al inicializar Firebase:', e);
+  dbFirestore = null;
+}
 </script>
 
 <style>
@@ -296,8 +307,9 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
     <div>
       <b>No se pudo conectar con Firebase Cloud Firestore.</b>
       Esto puede ocurrir si no hay conexión a internet o si el navegador bloquea el acceso.
-      La herramienta va a funcionar con normalidad durante esta sesión (puedes cargar, calcular y exportar),
-      pero <b>los datos no se guardarán en la nube</b> y se perderán si cierras o recargas la página.
+      La herramienta va a funcionar con normalidad (puedes cargar, calcular y exportar),
+      y los datos se guardarán localmente en este navegador usando <code>localStorage</code>.
+      Sin embargo, <b>los datos no se guardarán en la nube</b> ni se sincronizarán con otros dispositivos.
       Verifica tu conexión a internet y recarga la página para restablecer la sincronización.
     </div>
   </div>
@@ -311,7 +323,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
   <div class="view active" id="view-cargue">
     <div class="section-head">
       <h2>Fuentes de datos</h2>
-      <p>Carga cada archivo .xlsx en su tarjeta. Los datos se sincronizan en la nube (Firebase) y quedan disponibles desde cualquier dispositivo. Si no hay conexión, se guardan temporalmente en esta sesión.</p>
+      <p>Carga cada archivo .xlsx en su tarjeta. Los datos se sincronizan en la nube (Firebase) y quedan disponibles desde cualquier dispositivo. Si no hay conexión, se guardan localmente en el navegador.</p>
     </div>
     <div class="grid-uploads" id="uploadGrid"></div>
     <div class="action-bar">
@@ -705,6 +717,57 @@ const DATASETS = [
 const COLLECTION = 'datasets';
 let dbFailed = false;
 const memoryStore = new Map(); // respaldo local: key -> record (solo dura la sesión)
+
+/* --- Persistencia localStorage (fallback robusto cuando Firebase no está) --- */
+const LS_PREFIX = 'medisfarma_data_';
+function lsPut(key, record) {
+  try {
+    const serialized = JSON.stringify({ rows: record.rows, fileName: record.fileName, updatedAt: record.updatedAt, batches: record.batches || null });
+    localStorage.setItem(LS_PREFIX + key, serialized);
+  } catch (e) {
+    console.warn('[localStorage] Error guardando:', e);
+  }
+}
+function lsGet(key) {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return { key, rows: parsed.rows || [], fileName: parsed.fileName || '', updatedAt: parsed.updatedAt || '', batches: parsed.batches || null };
+  } catch (e) {
+    console.warn('[localStorage] Error leyendo:', e);
+    return null;
+  }
+}
+function lsGetAll() {
+  const records = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) {
+        const recordKey = k.slice(LS_PREFIX.length);
+        const rec = lsGet(recordKey);
+        if (rec) records.push(rec);
+      }
+    }
+  } catch (e) {
+    console.warn('[localStorage] Error listando:', e);
+  }
+  return records;
+}
+function lsDelete(key) {
+  try { localStorage.removeItem(LS_PREFIX + key); } catch(e) {}
+}
+function lsClear() {
+  try {
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach(k => localStorage.removeItem(k));
+  } catch(e) {}
+}
 let _unsubscribe = null; // onSnapshot unsubscribe handle
 let _localWriteActive = false;   // true while THIS client is writing
 let _snapshotDebounce = null;    // debounce timer for snapshot-driven refreshes
@@ -766,8 +829,19 @@ function deserializeFromFirestore(doc){
 /* --- Operaciones CRUD --- */
 
 async function idbPut(record) {
-  const docData = serializeForFirestore(record);
+  // Siempre guardar en localStorage como respaldo persistente
+  lsPut(record.key, record);
   _localWriteActive = true;
+  let docData = null;
+  try {
+    docData = serializeForFirestore(record);
+  } catch (serErr) {
+    console.warn('[idbPut] Error serializando datos para Firestore, guardando en memoria:', serErr);
+    activarModoMemoria(serErr);
+    memoryStore.set(record.key, record);
+    setTimeout(() => { _localWriteActive = false; }, 500);
+    return;
+  }
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     await dbFirestore.collection(COLLECTION).doc(record.key).set(docData, {merge:true});
@@ -786,6 +860,9 @@ async function idbGetAll() {
     return snap.docs.map(d => deserializeFromFirestore(d)).filter(Boolean);
   } catch (err) {
     activarModoMemoria(err);
+    // Intentar localStorage primero, luego memoryStore
+    const lsRecords = lsGetAll();
+    if (lsRecords.length > 0) return lsRecords;
     return Array.from(memoryStore.values());
   }
 }
@@ -796,10 +873,15 @@ async function idbGet(key) {
     return deserializeFromFirestore(doc);
   } catch (err) {
     activarModoMemoria(err);
+    // Intentar localStorage primero, luego memoryStore
+    const lsRec = lsGet(key);
+    if (lsRec) return lsRec;
     return memoryStore.get(key) || null;
   }
 }
 async function idbDelete(key) {
+  // Siempre eliminar de localStorage también
+  lsDelete(key);
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -812,6 +894,8 @@ async function idbDelete(key) {
   }
 }
 async function idbClearAll() {
+  // Siempre limpiar localStorage también
+  lsClear();
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -842,6 +926,8 @@ function startFirestoreListener(){
       const records = snap.docs.map(d => deserializeFromFirestore(d)).filter(Boolean);
       state.loaded = {};
       records.forEach(rec => {
+        // Sincronizar a localStorage para persistencia local
+        lsPut(rec.key, rec);
         state.loaded[rec.key] = {
           rowCount: rec.rows.length,
           fileName: rec.fileName,
@@ -860,8 +946,10 @@ function startFirestoreListener(){
     }, 300);
   }, err => {
     console.warn('Firestore onSnapshot error:', err);
-    // Si se pierde la conexión, no activamos modo memoria de inmediato;
-    // Firestore reintentará automáticamente.
+    // Si se pierde la conexión persistentemente, activar modo memoria
+    // y detener el listener para evitar reintentos infinitos.
+    activarModoMemoria(err);
+    stopFirestoreListener();
   });
 }
 function stopFirestoreListener(){
@@ -927,6 +1015,9 @@ function mapRowToFields(rawRow, headerIndex, fieldsDef){
   return out;
 }
 async function parseFile(file, datasetDef){
+  if(typeof XLSX === 'undefined'){
+    throw new Error('La librería XLSX no está disponible. Verifica tu conexión a internet y recarga la página.');
+  }
   const buf=await file.arrayBuffer();
   const wb=XLSX.read(buf,{type:'array',cellDates:true,dense:true});
   const sheetName=wb.SheetNames[0];
@@ -968,7 +1059,7 @@ async function refreshStatusFromDB(){
 function updateTopStatus(){
   const dot=document.getElementById('dbDot'); const txt=document.getElementById('dbStatusText');
   const n=Object.keys(state.loaded).length;
-  const modo = dbFailed ? ' (modo sesión, sin sincronización en la nube)' : '';
+  const modo = dbFailed ? ' (modo local, sin sincronización en la nube)' : '';
   if(n===0){ dot.className='dot'+(dbFailed?' warn':''); txt.textContent='Sin datos cargados'+modo; }
   else{
     dot.className='dot'+(dbFailed?' warn':' on');
@@ -2406,10 +2497,38 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
+  // Si Firebase no está disponible, cargar datos desde localStorage
+  if (!isFirestoreReady()) {
+    console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
+    const lsRecords = lsGetAll();
+    if (lsRecords.length > 0) {
+      state.loaded = {};
+      lsRecords.forEach(rec => {
+        // También sincronizar al memoryStore
+        memoryStore.set(rec.key, rec);
+        state.loaded[rec.key] = {
+          rowCount: rec.rows.length,
+          fileName: rec.fileName,
+          updatedAt: rec.updatedAt,
+          batches: rec.batches || null
+        };
+      });
+    }
+  }
   renderUploadCards();
   await refreshStatusFromDB();
   startFirestoreListener();
   showEmptyResults();
+  // Verificar disponibilidad de XLSX
+  if (typeof XLSX === 'undefined') {
+    console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
+      toast.className = 'toast error';
+      setTimeout(() => { toast.className = 'toast'; }, 8000);
+    }
+  }
 })();
 </script>
 </body>
