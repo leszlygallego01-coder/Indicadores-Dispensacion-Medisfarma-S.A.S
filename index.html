@@ -926,6 +926,7 @@ function lsClear() {
 }
 let _unsubscribe = null; // onSnapshot unsubscribe handle
 let _localWriteActive = false;   // true while THIS client is writing
+let _calculandoIndicadores = false; // guard anti-recursión para calcularIndicadores()
 let _snapshotDebounce = null;    // debounce timer for snapshot-driven refreshes
 
 // Firestore-ready check
@@ -1263,8 +1264,8 @@ function startFirestoreListener(){
         } catch(e){ console.warn('No se pudo sincronizar localStorage para', change.doc.id, e); }
       }
       // Si ya hay un cálculo procesado y los datos cambiaron (vienen de otro
-      // dispositivo), recalcular automáticamente.
-      if(state.processed){
+      // dispositivo), recalcular automáticamente. Guard anti-recursión.
+      if(state.processed && !_calculandoIndicadores){
         calcularIndicadores();
       }
     }, 300);
@@ -1604,6 +1605,9 @@ document.getElementById('btnLimpiarTodo').addEventListener('click', async ()=>{
    7. Pipeline de cálculo
    ========================================================================= */
 async function calcularIndicadores(){
+  // Guard anti-recursión: si ya se está calculando, salir inmediatamente.
+  if(_calculandoIndicadores){ console.warn('[calcularIndicadores] Llamada recursiva bloqueada'); return; }
+  _calculandoIndicadores = true;
   const btn=document.getElementById('btnCalcular');
   btn.disabled=true; btn.textContent='Calculando…';
   await new Promise(r=>setTimeout(r,30));
@@ -1747,8 +1751,16 @@ async function calcularIndicadores(){
     const epsGrupos=Array.from(new Set(rows.map(r=>r.epsGrupo).filter(Boolean))).sort();
     const zonas=Array.from(new Set(rows.map(r=>r.zona).filter(Boolean))).sort();
     const fechas=rows.map(r=>r.fecha).filter(Boolean);
-    const minFecha=fechas.length ? new Date(Math.min(...fechas)) : null;
-    const maxFecha=fechas.length ? new Date(Math.max(...fechas)) : null;
+    // NOTA: No usar Math.min(...fechas) ni Math.max(...fechas) porque con 120K+ filas
+    //       el spread excede la pila de llamadas (Maximum call stack size exceeded).
+    let minFecha=null, maxFecha=null;
+    for(let i=0;i<fechas.length;i++){
+      const f=fechas[i];
+      if(!minFecha || f<minFecha) minFecha=f;
+      if(!maxFecha || f>maxFecha) maxFecha=f;
+    }
+    if(minFecha!==null) minFecha=new Date(minFecha);
+    if(maxFecha!==null) maxFecha=new Date(maxFecha);
 
     // ---- Diagnóstico del cruce con Homólogo (para detectar de inmediato si el problema
     //      es de encabezados o de valores, en vez de mostrar 0 en silencio) ----
@@ -1776,6 +1788,7 @@ async function calcularIndicadores(){
   }catch(err){
     console.error(err); showToast('Error calculando indicadores: '+err.message, true);
   }finally{
+    _calculandoIndicadores = false;
     btn.disabled=false; btn.textContent='Calcular indicadores'; updateCalcButton();
   }
 }
