@@ -26,18 +26,10 @@ const firebaseConfig = {
   appId: "1:947919909003:web:5f9328c7e28ccf10b1e5c4"
 };
 let dbFirestore = null;
-
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
+    firebase.initializeApp(firebaseConfig);
     dbFirestore = firebase.firestore();
-
-    // Asignar instancias globales para el resto del código
-    window.dbFirestore = dbFirestore;
-    window.db = dbFirestore;
-
     console.log('[Init] Firebase Firestore inicializado correctamente.');
   } else {
     console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
@@ -191,6 +183,17 @@ nav.tabs button .count{
 .card.loaded{border-color:var(--green);}
 .card.loaded .drop{border-color:var(--green-soft);}
 .filename{font-size:10.5px;color:var(--ink-soft);margin-top:4px;word-break:break-all;}
+
+/* ---------- Drive folder sync (tarjeta Reporte de Dispensación) ---------- */
+.drive-folder-sync{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);}
+.drive-folder-sync button{
+  width:100%;font-family:var(--body);font-size:11.5px;font-weight:600;color:var(--blue);
+  background:var(--blue-soft);border:1px solid var(--blue);padding:8px 10px;border-radius:8px;
+  cursor:pointer;transition:background .15s;
+}
+.drive-folder-sync button:hover{background:#D5E7F7;}
+.drive-folder-sync button:disabled{background:var(--bg);color:var(--ink-soft);border-color:var(--line);cursor:not-allowed;}
+.drive-folder-sync .sync-status{font-size:10.5px;color:var(--ink-soft);margin-top:6px;line-height:1.5;min-height:14px;}
 
 .action-bar{position:sticky;bottom:0;margin-top:24px;background:linear-gradient(180deg, rgba(240,245,250,0) 0%, var(--bg) 40%);padding:18px 0 6px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .btn{font-family:var(--disp);font-weight:600;font-size:14px;border:none;cursor:pointer;padding:12px 22px;border-radius:8px;display:inline-flex;align-items:center;gap:8px;transition:transform .1s, box-shadow .15s;}
@@ -820,13 +823,6 @@ function isFirestoreReady(){
 }
 
 function activarModoMemoria(err){
-  // Verificar si Firestore está realmente conectado antes de activar el modo de advertencia
-  if (dbFirestore || window.dbFirestore || window.db) {
-    console.log('[Firebase] Conexión disponible — no se muestra alerta amarilla.');
-    const warn = document.getElementById('persistenceWarning');
-    if (warn) warn.style.display = 'none';
-    return;
-  }
   dbFailed = true;
   console.warn('Firebase no disponible, usando memoria temporal (sin persistencia en la nube):', err);
   if (modoMemoriaAvisado) return;
@@ -1181,11 +1177,10 @@ async function refreshStatusFromDB(){
 function updateTopStatus(){
   const dot=document.getElementById('dbDot'); const txt=document.getElementById('dbStatusText');
   const n=Object.keys(state.loaded).length;
-  const firestoreOk = dbFirestore || window.dbFirestore || window.db;
-  const modo = dbFailed && !firestoreOk ? ' (modo local, sin sincronización en la nube)' : (firestoreOk ? ' — sincronización en la nube activa' : '');
-  if(n===0){ dot.className='dot'+((dbFailed && !firestoreOk)?' warn':''); txt.textContent='Sin datos cargados'+modo; }
+  const modo = dbFailed ? ' (modo local, sin sincronización en la nube)' : '';
+  if(n===0){ dot.className='dot'+(dbFailed?' warn':''); txt.textContent='Sin datos cargados'+modo; }
   else{
-    dot.className='dot'+((dbFailed && !firestoreOk)?' warn':' on');
+    dot.className='dot'+(dbFailed?' warn':' on');
     const totalRows=Object.values(state.loaded).reduce((a,b)=>a+b.rowCount,0);
     txt.textContent=n+' fuente(s) cargadas · '+fmtInt(totalRows)+' filas en total'+modo;
   }
@@ -1255,9 +1250,16 @@ function renderUploadCards(){
       </div>
       ${loaded && loaded.fileName ? `<div class="filename">${d.accumulate ? 'Último archivo: ' : ''}${loaded.fileName}</div>` : ''}
       ${d.accumulate && loaded && loaded.batches && loaded.batches.length ? `<div class="filename" style="margin-top:4px;">${loaded.batches.slice(-3).map(b=>`${b.fileName} (+${fmtInt(b.addedCount!==undefined?b.addedCount:b.rowCount)})`).join(' · ')}${loaded.batches.length>3?' · …':''}</div>` : ''}
+      ${d.key==='reporte' ? `
+      <div class="drive-folder-sync">
+        <button type="button" id="btnSyncDriveReporte">☁ Sincronizar carpeta "Reportes de Dispensación" (Drive)</button>
+        <div class="sync-status" id="driveSyncStatus"></div>
+      </div>` : ''}
     `;
     grid.appendChild(card);
   });
+  const btnSyncDrive = document.getElementById('btnSyncDriveReporte');
+  if(btnSyncDrive) btnSyncDrive.addEventListener('click', syncReporteDesdeCarpetaDrive);
   grid.querySelectorAll('input[type=file]').forEach(inp=>{
     inp.addEventListener('change', e=>handleFileSelected(e.target.dataset.key, e.target.files[0]));
   });
@@ -2263,8 +2265,16 @@ function renderIndicadorSoporteEvento(rowsEvento, bodegaSearch, zona){
    que ella misma crea en el Drive del usuario, nunca el resto de su Drive.
    ========================================================================= */
 const GOOGLE_CLIENT_ID = '910136414090-96oen7683vu65coq3g78qc08m35rk3e6.apps.googleusercontent.com';
-const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+// 'drive.file' solo alcanza para los archivos que la app misma crea (respaldo).
+// Para LEER la carpeta "Reportes de Dispensación" — que ya existe en el Drive del
+// usuario y no fue creada por esta app — se necesita además 'drive.readonly'
+// (acceso de solo lectura a todo el Drive). Se piden ambos scopes juntos en el
+// mismo flujo de conexión; el usuario verá ese permiso adicional al conectar.
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
 const GOOGLE_DRIVE_FOLDER_NAME = 'Medisfarma Indicadores - Respaldo';
+// Carpeta de origen (ya existente en Drive) desde donde se sincroniza el
+// "Reporte de Dispensación": Reportes de Dispensación.
+const GOOGLE_DRIVE_REPORTES_FOLDER_ID = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';
 
 let gapiClientReady = false;
 let driveTokenClient = null;
@@ -2396,6 +2406,113 @@ async function uploadBlobToDrive(blob, filename, mimeType){
     throw new Error('Error subiendo a Google Drive (HTTP ' + resp.status + '): ' + errText);
   }
   return resp.json();
+}
+
+/* ---- Sincronización de lectura: carpeta "Reportes de Dispensación" ----
+   Lista y descarga los .xlsx de GOOGLE_DRIVE_REPORTES_FOLDER_ID y acumula sus
+   filas dentro de la tarjeta "Reporte de Dispensación" (dataset key 'reporte'),
+   reutilizando exactamente el mismo flujo de cargue/deduplicación que el
+   cargue manual (handleFileSelected). ---- */
+
+// Lista los archivos .xlsx (u otros formatos Excel) dentro de una carpeta de Drive por su ID.
+async function listXlsxFilesInFolder(folderId){
+  await ensureGapiClient();
+  await ensureFreshDriveToken();
+  const q = "'" + folderId + "' in parents and trashed = false and (" +
+    "mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or " +
+    "mimeType = 'application/vnd.ms-excel' or " +
+    "name contains '.xlsx')";
+  let files = [];
+  let pageToken = null;
+  do{
+    const res = await gapi.client.drive.files.list({
+      q,
+      fields: 'nextPageToken, files(id, name, modifiedTime, mimeType)',
+      spaces: 'drive',
+      pageSize: 100,
+      pageToken: pageToken || undefined
+    });
+    files = files.concat(res.result.files || []);
+    pageToken = res.result.nextPageToken || null;
+  } while(pageToken);
+  files.sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  return files;
+}
+
+// Descarga el contenido binario de un archivo de Drive (alt=media) como ArrayBuffer,
+// usando el access token OAuth2 vigente (gapi.client no expone bien binarios, por eso fetch directo).
+async function downloadDriveFileAsArrayBuffer(fileId){
+  await ensureFreshDriveToken();
+  const doFetch = (token) => fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  let resp = await doFetch(driveAccessToken);
+  if(resp.status === 401){
+    // Token expirado/ inválido: forzar refresco interactivo y reintentar una vez.
+    await requestDriveAccessToken(true);
+    resp = await doFetch(driveAccessToken);
+  }
+  if(!resp.ok){
+    const errText = await resp.text().catch(()=> '');
+    throw new Error('Error descargando archivo de Drive (HTTP ' + resp.status + '): ' + errText);
+  }
+  return await resp.arrayBuffer();
+}
+
+// renderUploadCards() reconstruye el HTML de las tarjetas (incl. el botón/estado de
+// sync) cada vez que se procesa un archivo, así que nunca cacheamos esos nodos:
+// se vuelven a buscar en cada actualización para no escribir sobre elementos ya
+// desmontados del DOM.
+function setDriveSyncStatus(text){
+  const el = document.getElementById('driveSyncStatus');
+  if(el) el.textContent = text;
+}
+function setDriveSyncButtonDisabled(disabled){
+  const btn = document.getElementById('btnSyncDriveReporte');
+  if(btn) btn.disabled = disabled;
+}
+
+// Orquesta la sincronización completa: conecta si hace falta, lista los .xlsx de la
+// carpeta "Reportes de Dispensación", descarga cada uno y lo acumula en 'reporte'.
+async function syncReporteDesdeCarpetaDrive(){
+  setDriveSyncButtonDisabled(true);
+  setDriveSyncStatus('Conectando con Google Drive…');
+  try{
+    await ensureGapiClient();
+    await requestDriveAccessToken(true); // interactivo si no hay sesión/consentimiento aún
+    if(!driveConnected) updateDriveUI(true);
+
+    setDriveSyncStatus('Buscando archivos .xlsx en "Reportes de Dispensación"…');
+    const files = await listXlsxFilesInFolder(GOOGLE_DRIVE_REPORTES_FOLDER_ID);
+    if(!files.length){
+      setDriveSyncStatus('No se encontraron archivos .xlsx en la carpeta de Drive.');
+      showToast('No se encontraron archivos .xlsx en la carpeta "Reportes de Dispensación".', true);
+      return;
+    }
+
+    let procesados = 0, totalFilasAgregadas = 0;
+    for(const f of files){
+      procesados++;
+      setDriveSyncStatus('Procesando ' + procesados + '/' + files.length + ': ' + f.name + '…');
+      const buf = await downloadDriveFileAsArrayBuffer(f.id);
+      // Objeto "archivo" mínimo compatible con parseFile()/handleFileSelected(),
+      // que solo necesitan .name y .arrayBuffer().
+      const pseudoFile = { name: f.name, arrayBuffer: async () => buf };
+      const before = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
+      await handleFileSelected('reporte', pseudoFile); // acumula + refresca contador de filas y nombre de archivo en la UI
+      const after = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
+      totalFilasAgregadas += Math.max(0, after - before);
+      setDriveSyncButtonDisabled(true); // renderUploadCards() lo reactivó al refrescar; lo mantenemos bloqueado hasta terminar
+    }
+    setDriveSyncStatus('Sincronización completa: ' + files.length + ' archivo(s) procesado(s) · +' + fmtInt(totalFilasAgregadas) + ' filas nuevas.');
+    showToast('Sincronización con Drive completa: ' + files.length + ' archivo(s), +' + fmtInt(totalFilasAgregadas) + ' filas nuevas.');
+  }catch(err){
+    console.error('[Drive Sync carpeta]', err);
+    setDriveSyncStatus('Error al sincronizar con Google Drive.');
+    showToast('Error al sincronizar con Google Drive: ' + err.message, true);
+  }finally{
+    setDriveSyncButtonDisabled(false);
+  }
 }
 
 // Convierte un workbook de SheetJS en un Blob .xlsx listo para subir a Drive.
@@ -2819,13 +2936,8 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
-  // Si Firebase está conectado, ocultar la alerta amarilla y actualizar indicador
-  if (isFirestoreReady()) {
-    console.log('[Init] Firebase Firestore disponible — ocultando alerta de advertencia.');
-    const warn = document.getElementById('persistenceWarning');
-    if (warn) warn.style.display = 'none';
-    dbFailed = false;
-  } else {
+  // Si Firebase no está disponible, cargar datos desde localStorage
+  if (!isFirestoreReady()) {
     console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
     const lsRecords = lsGetAll();
     if (lsRecords.length > 0) {
