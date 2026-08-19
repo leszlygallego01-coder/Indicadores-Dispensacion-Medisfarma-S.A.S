@@ -26,22 +26,21 @@ const firebaseConfig = {
   appId: "1:947919909003:web:5f9328c7e28ccf10b1e5c4"
 };
 let dbFirestore = null;
-// Manejo de errores SILENCIOSO: si Firestore falla, está mal configurado, o el
-// usuario está sin conexión, la app NUNCA debe detenerse ni bloquear el resto de
-// los controles (p. ej. los botones de Google Drive). Cualquier error aquí se
-// atrapa, se registra solo en consola y la app sigue funcionando con
-// localStorage/memoria como respaldo (ver isFirestoreReady() más abajo).
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
     firebase.initializeApp(firebaseConfig);
-    dbFirestore = firebase.firestore();
-    console.log('[Init] Firebase Firestore inicializado correctamente.');
+    try {
+      dbFirestore = firebase.firestore();
+      console.log('[Init] Firebase Firestore inicializado correctamente.');
+    } catch (fsErr) {
+      console.warn('[Init] Firestore no disponible (sin conexión o error), la app continuará con almacenamiento local:', fsErr);
+      dbFirestore = null;
+    }
   } else {
     console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
-    dbFirestore = null;
   }
 } catch (e) {
-  console.warn('[Init] Firebase/Firestore no disponible (se continúa sin detener la app):', e);
+  console.warn('[Init] Error al inicializar Firebase, la app continuará normalmente:', e);
   dbFirestore = null;
 }
 </script>
@@ -129,6 +128,12 @@ header.top{
 .drive-autobackup input{cursor:pointer;}
 
 nav.tabs{display:flex;gap:6px;margin-bottom:26px;border-bottom:1px solid var(--line);}
+.persistence-warning{
+  display:flex; gap:12px; align-items:flex-start; background:var(--amber-soft); border:1px solid #E8C689;
+  border-radius:var(--radius); padding:14px 16px; margin-bottom:20px; font-size:12.5px; color:#5C3D0B; line-height:1.55;
+}
+.persistence-warning .pw-icon{font-size:20px; line-height:1; flex-shrink:0;}
+.persistence-warning code{background:rgba(0,0,0,0.06); padding:1px 5px; border-radius:4px; font-family:var(--mono); font-size:11.5px;}
 .diag-panel{
   display:flex; gap:12px; align-items:flex-start; border-radius:var(--radius);
   padding:14px 16px; margin-bottom:20px; font-size:12.5px; line-height:1.55; border:1px solid;
@@ -343,6 +348,17 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
     </div>
   </header>
 
+  <div class="persistence-warning" id="persistenceWarning" style="display:none;">
+    <span class="pw-icon">⚠</span>
+    <div>
+      <b>No se pudo conectar con Firebase Cloud Firestore.</b>
+      Esto puede ocurrir si no hay conexión a internet o si el navegador bloquea el acceso.
+      La herramienta va a funcionar con normalidad (puedes cargar, calcular y exportar),
+      y los datos se guardarán localmente en este navegador usando <code>localStorage</code>.
+      Sin embargo, <b>los datos no se guardarán en la nube</b> ni se sincronizarán con otros dispositivos.
+      Verifica tu conexión a internet y recarga la página para restablecer la sincronización.
+    </div>
+  </div>
 
   <nav class="tabs">
     <button class="active" data-tab="cargue">1. Cargue de datos</button>
@@ -816,10 +832,8 @@ function activarModoMemoria(err){
   console.warn('Firebase no disponible, usando memoria temporal (sin persistencia en la nube):', err);
   if (modoMemoriaAvisado) return;
   modoMemoriaAvisado = true;
-  // El banner de advertencia de Firestore fue removido del DOM/HTML por
-  // requerimiento; ya no se muestra ningún aviso visual aquí, solo se
-  // registra en consola y se refleja en el indicador "(modo local...)" del
-  // estado superior vía updateTopStatus().
+  const warn = document.getElementById('persistenceWarning');
+  if (warn) warn.style.display = 'flex';
   updateTopStatus();
 }
 let modoMemoriaAvisado = false;
@@ -902,23 +916,11 @@ async function fetchRecordFromMeta(metaDoc){
   return { key: d.key, rows, fileName: d.fileName || '', batches, updatedAt: d.updatedAt || '' };
 }
 
-/* --- Operaciones CRUD ---
-   IMPORTANTE: la clave 'reporte' (tarjeta "Reporte de Dispensación") está
-   100% EXCLUIDA de Firebase Cloud Firestore. Sus datos entran solo por
-   sincronización con Google Drive (ver syncReporteDesdeCarpetaDrive) y se
-   guardan/leen exclusivamente en localStorage — nunca se llama a
-   dbFirestore ni a activarModoMemoria() para esta clave, así que un fallo
-   de Firestore jamás la afecta ni dispara ningún aviso relacionado con ella. */
-const FIRESTORE_EXCLUDED_KEYS = new Set(['reporte']);
+/* --- Operaciones CRUD --- */
 
 async function idbPut(record) {
   // Siempre guardar en localStorage como respaldo persistente
   lsPut(record.key, record);
-  if (FIRESTORE_EXCLUDED_KEYS.has(record.key)) {
-    // 'reporte': solo localStorage, sin tocar Firestore para nada.
-    memoryStore.set(record.key, record);
-    return;
-  }
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -955,34 +957,20 @@ async function idbPut(record) {
   }
 }
 async function idbGetAll() {
-  let records = [];
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const snap = await dbFirestore.collection(COLLECTION).get();
-    const fetched = await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d)));
-    // 'reporte' queda excluido aunque exista un documento legado en Firestore:
-    // su fuente de verdad es siempre localStorage (ver más abajo).
-    records = fetched.filter(r => r && !FIRESTORE_EXCLUDED_KEYS.has(r.key));
+    const records = await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d)));
+    return records.filter(Boolean);
   } catch (err) {
     activarModoMemoria(err);
-    // Intentar localStorage primero, luego memoryStore (excluyendo 'reporte', que se agrega aparte abajo)
-    const lsRecords = lsGetAll().filter(r => !FIRESTORE_EXCLUDED_KEYS.has(r.key));
-    records = lsRecords.length > 0
-      ? lsRecords
-      : Array.from(memoryStore.values()).filter(r => !FIRESTORE_EXCLUDED_KEYS.has(r.key));
+    // Intentar localStorage primero, luego memoryStore
+    const lsRecords = lsGetAll();
+    if (lsRecords.length > 0) return lsRecords;
+    return Array.from(memoryStore.values());
   }
-  // 'reporte' siempre se lee directo de localStorage, sin pasar por Firestore.
-  const reporteLocal = lsGet('reporte');
-  if (reporteLocal) records.push(reporteLocal);
-  return records;
 }
 async function idbGet(key) {
-  if (FIRESTORE_EXCLUDED_KEYS.has(key)) {
-    // 'reporte': lectura exclusiva desde localStorage/memoria, sin Firestore.
-    const lsRec = lsGet(key);
-    if (lsRec) return lsRec;
-    return memoryStore.get(key) || null;
-  }
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const doc = await dbFirestore.collection(COLLECTION).doc(key).get();
@@ -999,11 +987,6 @@ async function idbGet(key) {
 async function idbDelete(key) {
   // Siempre eliminar de localStorage también
   lsDelete(key);
-  if (FIRESTORE_EXCLUDED_KEYS.has(key)) {
-    // 'reporte': borrado exclusivo en localStorage/memoria, sin tocar Firestore.
-    memoryStore.delete(key);
-    return;
-  }
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1046,6 +1029,7 @@ async function idbClearAll() {
 function startFirestoreListener(){
   if(!isFirestoreReady()) return;
   if(_unsubscribe) return; // ya activo
+  try {
   _unsubscribe = dbFirestore.collection(COLLECTION).onSnapshot(snap => {
     // Si estamos en medio de una escritura local (cargue/borrado),
     // refreshStatusFromDB ya refresca la UI. Evitamos duplicar.
@@ -1055,40 +1039,24 @@ function startFirestoreListener(){
     _snapshotDebounce = setTimeout(async () => {
       // 1) Actualizar de inmediato los metadatos livianos (conteo de filas,
       //    nombre de archivo, lotes) SIN descargar los fragmentos completos.
-      //    'reporte' queda EXCLUIDO de este listener: nunca se lee ni se
-      //    sobrescribe desde Firestore, solo desde localStorage/Drive.
-      state.loaded={};
+      state.loaded = {};
       snap.docs.forEach(d => {
         const data = d.data();
-        const key = data.key || d.id;
-        if(FIRESTORE_EXCLUDED_KEYS.has(key)) return;
-        state.loaded[key] = {
+        state.loaded[data.key || d.id] = {
           rowCount: data.rowCount !== undefined ? data.rowCount : (Array.isArray(data.rows) ? data.rows.length : 0),
           fileName: data.fileName,
           updatedAt: data.updatedAt,
           batches: data.batches || null
         };
       });
-      // Reinsertar 'reporte' siempre desde localStorage (fuente exclusiva de Drive).
-      const reporteLocal = lsGet('reporte');
-      if(reporteLocal){
-        state.loaded['reporte'] = {
-          rowCount: reporteLocal.rows.length,
-          fileName: reporteLocal.fileName,
-          updatedAt: reporteLocal.updatedAt,
-          batches: reporteLocal.batches || null
-        };
-      }
       renderUploadCards();
       updateTopStatus();
       updateCalcButton();
       // 2) Sincronizar a localStorage sólo los documentos que realmente
       //    cambiaron, descargando sus fragmentos completos únicamente
-      //    cuando hace falta. Se ignora 'reporte' (ya no vive en Firestore).
+      //    cuando hace falta.
       const changed = snap.docChanges().filter(c => c.type==='added' || c.type==='modified');
       for(const change of changed){
-        const changeKey = (change.doc.data() && change.doc.data().key) || change.doc.id;
-        if(FIRESTORE_EXCLUDED_KEYS.has(changeKey)) continue;
         try {
           const rec = await fetchRecordFromMeta(change.doc);
           lsPut(rec.key, rec);
@@ -1107,6 +1075,10 @@ function startFirestoreListener(){
     activarModoMemoria(err);
     stopFirestoreListener();
   });
+  } catch(err) {
+    console.warn('startFirestoreListener setup error:', err);
+    activarModoMemoria(err);
+  }
 }
 function stopFirestoreListener(){
   if(_unsubscribe){ _unsubscribe(); _unsubscribe = null; }
@@ -1187,10 +1159,19 @@ async function parseFile(file, datasetDef){
   for(let i=0;i<Math.min(aoa.length,10);i++){
     let score=0;
     aoa[i].forEach(c=>{ if(allAliases.has(normHeader(c))) score++; });
+    console.log('[parseFile]', file.name||'?', 'fila', i, 'score:', score, 'headers:', aoa[i].slice(0,20).map(String));
     if(score>bestScore){bestScore=score; headerRowIdx=i;}
   }
+  console.log('[parseFile]', file.name||'?', 'headerRowIdx:', headerRowIdx, 'bestScore:', bestScore, 'total data rows:', aoa.length - headerRowIdx - 1);
   const headerIndex=new Map();
   aoa[headerRowIdx].forEach((h,idx)=>{ const nh=normHeader(h); if(nh && !headerIndex.has(nh)) headerIndex.set(nh,idx); });
+  console.log('[parseFile]', file.name||'?', 'headerIndex keys:', Array.from(headerIndex.keys()).join(', '));
+  if(bestScore <= 0){
+    console.warn('[parseFile]', file.name||'?', 'ADVERTENCIA: no se detectó fila de cabecera conocida (bestScore='+bestScore+'). Cabeceras esperadas vs. encontradas:');
+    console.warn('  Esperadas:', Array.from(allAliases).join(', '));
+    console.warn('  Encontradas:', aoa[headerRowIdx].map(normHeader).join(', '));
+    throw new Error('No se reconocieron las cabeceras del archivo "' + (file.name||'') + '". Verifica que las columnas coincidan con las esperadas: ' + datasetDef.cols.join(', '));
+  }
 
   const rows=[];
   for(let r=headerRowIdx+1;r<aoa.length;r++){
@@ -1304,7 +1285,7 @@ function renderUploadCards(){
     grid.appendChild(card);
   });
   const btnSyncDrive = document.getElementById('btnSyncDriveReporte');
-  if(btnSyncDrive) btnSyncDrive.addEventListener('click', onClickSyncDriveReporte);
+  if(btnSyncDrive) btnSyncDrive.addEventListener('click', syncReporteDesdeCarpetaDrive);
   grid.querySelectorAll('input[type=file]').forEach(inp=>{
     inp.addEventListener('change', e=>handleFileSelected(e.target.dataset.key, e.target.files[0]));
   });
@@ -1347,12 +1328,14 @@ function dedupKeyFor(key, r){
   return key==='avances' ? avanceRowDedupKey(r) : reporteRowDedupKey(r);
 }
 
-async function handleFileSelected(key,file){
+async function handleFileSelected(key,file,{rethrowErrors=false}={}){
   if(!file) return;
   const def=DATASETS.find(d=>d.key===key);
   showToast('Leyendo '+file.name+'…');
   try{
     const rows=await parseFile(file,def);
+    console.log('[handleFileSelected]', key, file.name, '→', rows.length, 'filas parseadas');
+    if(rows.length && rows[0]) console.log('[handleFileSelected] Primera fila:', JSON.stringify(rows[0]));
     if(!rows.length){ showToast('No se encontraron filas de datos en '+file.name,true); return; }
 
     if(def.accumulate){
@@ -1366,6 +1349,7 @@ async function handleFileSelected(key,file){
       const merged = prevRows.slice();
       const nowISO = new Date().toISOString();
       let added=0, skipped=0;
+      console.log('[handleFileSelected]', key, 'prevRows:', prevRows.length, 'seen keys:', seen.size, 'new rows:', rows.length);
       rows.forEach(r=>{
         const k=dedupKeyFor(key,r);
         if(seen.has(k)){ skipped++; return; }
@@ -1376,13 +1360,14 @@ async function handleFileSelected(key,file){
       });
       const batches = prevBatches.concat([{fileName:file.name, rowCount:rows.length, addedCount:added, skippedCount:skipped, uploadedAt:new Date().toISOString()}]);
       await idbPut({key, rows:merged, fileName:file.name, batches, updatedAt:new Date().toISOString()});
+      console.log('[handleFileSelected]', key, 'idbPut OK — added:', added, 'skipped:', skipped, 'merged:', merged.length);
       showToast('"'+def.title+'": +'+fmtInt(added)+' filas nuevas'+(skipped?(' ('+fmtInt(skipped)+' ya existían, se omitieron)'):'')+'. Total acumulado: '+fmtInt(merged.length)+' filas.');
     }else{
       await idbPut({key, rows, fileName:file.name, updatedAt:new Date().toISOString()});
       showToast('"'+def.title+'" cargado: '+fmtInt(rows.length)+' filas.');
     }
-    refreshStatusFromDB();
-  }catch(err){ console.error(err); showToast('Error leyendo '+file.name+': '+err.message,true); }
+    await refreshStatusFromDB();
+  }catch(err){ console.error(err); showToast('Error leyendo '+file.name+': '+err.message,true); if(rethrowErrors) throw err; }
 }
 document.getElementById('btnLimpiarTodo').addEventListener('click', async ()=>{
   if(!confirm('¿Borrar todos los datos sincronizados en Firebase?')) return;
@@ -2484,6 +2469,39 @@ async function listXlsxFilesInFolder(folderId){
   return files;
 }
 
+// Fallback: lista archivos .xlsx de una carpeta usando fetch directo al REST API
+// (sin depender de gapi.client). Se usa cuando gapi.client no se pudo cargar.
+async function listXlsxFilesInFolderFetch(folderId){
+  await ensureFreshDriveToken();
+  const q = "'" + folderId + "' in parents and trashed = false and (" +
+    "mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or " +
+    "mimeType = 'application/vnd.ms-excel' or " +
+    "name contains '.xlsx')";
+  const params = new URLSearchParams({
+    q,
+    fields: 'nextPageToken, files(id, name, modifiedTime, mimeType)',
+    spaces: 'drive',
+    pageSize: '100'
+  });
+  let files = [], pageToken = null;
+  do{
+    if(pageToken) params.set('pageToken', pageToken);
+    else params.delete('pageToken');
+    const resp = await fetch('https://www.googleapis.com/drive/v3/files?' + params.toString(), {
+      headers: { Authorization: 'Bearer ' + driveAccessToken }
+    });
+    if(!resp.ok){
+      const errText = await resp.text().catch(()=> '');
+      throw new Error('Error listando archivos de Drive (HTTP ' + resp.status + '): ' + errText);
+    }
+    const data = await resp.json();
+    files = files.concat(data.files || []);
+    pageToken = data.nextPageToken || null;
+  } while(pageToken);
+  files.sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  return files;
+}
+
 // Descarga el contenido binario de un archivo de Drive (alt=media) como ArrayBuffer,
 // usando el access token OAuth2 vigente (gapi.client no expone bien binarios, por eso fetch directo).
 async function downloadDriveFileAsArrayBuffer(fileId){
@@ -2517,47 +2535,38 @@ function setDriveSyncButtonDisabled(disabled){
   if(btn) btn.disabled = disabled;
 }
 
-// Handler del CLIC del botón. Se separa de syncReporteDesdeCarpetaDrive() para
-// poder validar de inmediato lo mínimo indispensable (CLIENT_ID, librerías de
-// Google cargadas) y avisar con un alert() + console.log/error si algo falta,
-// en vez de que el botón "no haga nada" sin explicación.
-function onClickSyncDriveReporte(){
-  console.log('[Drive Sync] Clic en "Sincronizar carpeta Reportes de Dispensación (Drive)".');
-  try {
-    if (!GOOGLE_CLIENT_ID) {
-      throw new Error('Falta configurar el CLIENT_ID de Google (GOOGLE_CLIENT_ID) en el código.');
-    }
-    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-      throw new Error('No se pudo cargar Google Identity Services (accounts.google.com/gsi/client). Verifica tu conexión a internet o que el <script> esté incluido.');
-    }
-    if (typeof gapi === 'undefined') {
-      throw new Error('No se pudo cargar la librería de Google API (apis.google.com/js/api.js). Verifica tu conexión a internet.');
-    }
-    if (typeof XLSX === 'undefined') {
-      throw new Error('La librería SheetJS (XLSX) no está disponible para leer los archivos .xlsx. Recarga la página.');
-    }
-    // Validaciones básicas superadas: solicitar autenticación OAuth2 y sincronizar.
-    syncReporteDesdeCarpetaDrive();
-  } catch (err) {
-    console.error('[Drive Sync] No se pudo iniciar la sincronización:', err);
-    alert('No se pudo iniciar la sincronización con Google Drive:\n\n' + err.message);
-    setDriveSyncStatus('Error: ' + err.message);
-    setDriveSyncButtonDisabled(false);
-  }
-}
-
 // Orquesta la sincronización completa: conecta si hace falta, lista los .xlsx de la
 // carpeta "Reportes de Dispensación", descarga cada uno y lo acumula en 'reporte'.
 async function syncReporteDesdeCarpetaDrive(){
+  // ── Guard: verificar CLIENT_ID ──
+  if(!GOOGLE_CLIENT_ID){
+    const msg = 'Error de configuración: GOOGLE_CLIENT_ID no está definido. No se puede autenticar con Google Drive.';
+    console.error('[Drive Sync carpeta]', msg);
+    alert(msg);
+    return;
+  }
   setDriveSyncButtonDisabled(true);
   setDriveSyncStatus('Conectando con Google Drive…');
+  let gapiOk = false;
   try{
-    await ensureGapiClient();
-    await requestDriveAccessToken(true); // interactivo: pide login/consentimiento con google.accounts.oauth2
+    try{
+      await ensureGapiClient();
+      gapiOk = true;
+    }catch(gapiErr){
+      console.warn('[Drive Sync] gapi.client no disponible, se usará fetch directo con token OAuth.', gapiErr);
+      gapiOk = false;
+    }
+    await requestDriveAccessToken(true); // interactivo si no hay sesión/consentimiento aún
     if(!driveConnected) updateDriveUI(true);
 
     setDriveSyncStatus('Buscando archivos .xlsx en "Reportes de Dispensación"…');
-    const files = await listXlsxFilesInFolder(GOOGLE_DRIVE_REPORTES_FOLDER_ID);
+    let files;
+    if(gapiOk){
+      files = await listXlsxFilesInFolder(GOOGLE_DRIVE_REPORTES_FOLDER_ID);
+    } else {
+      // Fallback: usar fetch directo con el token OAuth cuando gapi.client no cargó
+      files = await listXlsxFilesInFolderFetch(GOOGLE_DRIVE_REPORTES_FOLDER_ID);
+    }
     if(!files.length){
       setDriveSyncStatus('No se encontraron archivos .xlsx en la carpeta de Drive.');
       showToast('No se encontraron archivos .xlsx en la carpeta "Reportes de Dispensación".', true);
@@ -2569,13 +2578,20 @@ async function syncReporteDesdeCarpetaDrive(){
       procesados++;
       setDriveSyncStatus('Procesando ' + procesados + '/' + files.length + ': ' + f.name + '…');
       const buf = await downloadDriveFileAsArrayBuffer(f.id);
+      console.log('[Drive Sync] Descargado', f.name, '→', buf.byteLength, 'bytes');
       // Objeto "archivo" mínimo compatible con parseFile()/handleFileSelected(),
-      // que solo necesitan .name y .arrayBuffer(); parseFile() usa XLSX.read() internamente.
+      // que solo necesitan .name y .arrayBuffer().
       const pseudoFile = { name: f.name, arrayBuffer: async () => buf };
-      const before = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
-      await handleFileSelected('reporte', pseudoFile); // acumula + refresca contador de filas y nombre de archivo en la UI
-      const after = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
-      totalFilasAgregadas += Math.max(0, after - before);
+      // Leer rowCount directamente desde la BD ANTES de procesar (no depender de state.loaded)
+      const beforeRec = await idbGet('reporte');
+      const beforeRows = beforeRec ? beforeRec.rows.length : 0;
+      console.log('[Drive Sync] Antes de procesar', f.name, ':', beforeRows, 'filas existentes');
+      await handleFileSelected('reporte', pseudoFile, {rethrowErrors: true}); // acumula + refresca contador de filas y nombre de archivo en la UI
+      // Leer rowCount directamente desde la BD DESPUÉS de procesar
+      const afterRec = await idbGet('reporte');
+      const afterRows = afterRec ? afterRec.rows.length : 0;
+      console.log('[Drive Sync] Después de procesar', f.name, ':', afterRows, 'filas totales');
+      totalFilasAgregadas += Math.max(0, afterRows - beforeRows);
       setDriveSyncButtonDisabled(true); // renderUploadCards() lo reactivó al refrescar; lo mantenemos bloqueado hasta terminar
     }
     setDriveSyncStatus('Sincronización completa: ' + files.length + ' archivo(s) procesado(s) · +' + fmtInt(totalFilasAgregadas) + ' filas nuevas.');
@@ -2584,7 +2600,7 @@ async function syncReporteDesdeCarpetaDrive(){
     console.error('[Drive Sync carpeta]', err);
     setDriveSyncStatus('Error al sincronizar con Google Drive.');
     showToast('Error al sincronizar con Google Drive: ' + err.message, true);
-    alert('Ocurrió un error durante la sincronización con Google Drive:\n\n' + err.message);
+    alert('Error al sincronizar con Google Drive: ' + (err && err.message ? err.message : err));
   }finally{
     setDriveSyncButtonDisabled(false);
   }
@@ -3011,48 +3027,37 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
-  // Todo el arranque va en try/catch: si algo fallara aquí (p. ej. lectura de
-  // localStorage, o Firestore lento/caído), NO debe dejar la app a medio
-  // inicializar ni impedir que los botones (incl. Sincronizar Drive, que ya
-  // tiene su propio listener independiente) queden utilizables.
-  try {
-    // Si Firebase no está disponible, cargar datos desde localStorage
-    if (!isFirestoreReady()) {
-      console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
-      const lsRecords = lsGetAll();
-      if (lsRecords.length > 0) {
-        state.loaded = {};
-        lsRecords.forEach(rec => {
-          // También sincronizar al memoryStore
-          memoryStore.set(rec.key, rec);
-          state.loaded[rec.key] = {
-            rowCount: rec.rows.length,
-            fileName: rec.fileName,
-            updatedAt: rec.updatedAt,
-            batches: rec.batches || null
-          };
-        });
-      }
+  // Si Firebase no está disponible, cargar datos desde localStorage
+  if (!isFirestoreReady()) {
+    console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
+    const lsRecords = lsGetAll();
+    if (lsRecords.length > 0) {
+      state.loaded = {};
+      lsRecords.forEach(rec => {
+        // También sincronizar al memoryStore
+        memoryStore.set(rec.key, rec);
+        state.loaded[rec.key] = {
+          rowCount: rec.rows.length,
+          fileName: rec.fileName,
+          updatedAt: rec.updatedAt,
+          batches: rec.batches || null
+        };
+      });
     }
-    renderUploadCards();
-    await refreshStatusFromDB();
-    startFirestoreListener();
-    showEmptyResults();
-    // Verificar disponibilidad de XLSX
-    if (typeof XLSX === 'undefined') {
-      console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
-      const toast = document.getElementById('toast');
-      if (toast) {
-        toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
-        toast.className = 'toast error';
-        setTimeout(() => { toast.className = 'toast'; }, 8000);
-      }
+  }
+  renderUploadCards();
+  await refreshStatusFromDB();
+  startFirestoreListener();
+  showEmptyResults();
+  // Verificar disponibilidad de XLSX
+  if (typeof XLSX === 'undefined') {
+    console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
+      toast.className = 'toast error';
+      setTimeout(() => { toast.className = 'toast'; }, 8000);
     }
-  } catch (err) {
-    console.error('[Init] Error inesperado durante el arranque (la app continúa):', err);
-    // Aunque algo haya fallado arriba, garantizamos que las tarjetas (y sus
-    // botones, incl. el de Drive) queden renderizadas y utilizables.
-    try { renderUploadCards(); } catch(e2){ console.error('[Init] renderUploadCards también falló:', e2); }
   }
 })();
 </script>
