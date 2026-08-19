@@ -1235,14 +1235,25 @@ function renderUploadCards(){
     const card=document.createElement('div');
     card.className='card '+(d.required?'required':'optional')+(loaded?' loaded':'');
     const nBatches = loaded && loaded.batches ? loaded.batches.length : (loaded ? 1 : 0);
-    card.innerHTML=`
-      <h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
-      <p class="desc">${d.desc}</p>
-      <div class="cols">${d.cols.join(' · ')}</div>
+    const isReporte = d.key === 'reporte';
+    // 'reporte' (Reporte de Dispensación) NO usa cargue manual: sus datos entran
+    // exclusivamente por sincronización con la carpeta de Google Drive. El resto
+    // de tarjetas conserva el cargue manual de siempre (persistido en Firebase).
+    const dropZoneHtml = isReporte ? '' : `
       <label class="drop" data-key="${d.key}">
         <input type="file" accept=".xlsx,.xls,.csv" data-key="${d.key}">
         <div class="hint"><b>Clic para cargar</b> o arrastra el archivo aquí${d.accumulate ? '<br><span style="color:var(--green);">se suma a lo ya cargado</span>' : ''}</div>
-      </label>
+      </label>`;
+    const driveSyncHtml = isReporte ? `
+      <div class="drive-folder-sync">
+        <button type="button" id="btnSyncDriveReporte">☁ Sincronizar carpeta "Reportes de Dispensación" (Drive)</button>
+        <div class="sync-status" id="driveSyncStatus">${loaded ? 'Última sincronización: '+fmtInt(loaded.rowCount)+' filas acumuladas.' : 'Aún no se ha sincronizado con Drive.'}</div>
+      </div>` : '';
+    card.innerHTML=`
+      <h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}${isReporte ? ' <span class="acumulativo-tag" style="color:var(--blue);">· solo Google Drive</span>' : ''}</h3>
+      <p class="desc">${d.desc}${isReporte ? ' Esta tarjeta ya NO acepta cargue manual: sus datos provienen exclusivamente de la carpeta de Google Drive.' : ''}</p>
+      <div class="cols">${d.cols.join(' · ')}</div>
+      ${dropZoneHtml}
       <div class="status-row">
         ${loaded
           ? `<span class="rows">✓ ${fmtInt(loaded.rowCount)} filas${d.accumulate && nBatches>1 ? ' · '+nBatches+' cargues' : ''}</span><button class="clear" data-key="${d.key}">${d.accumulate ? 'Borrar acumulado' : 'Quitar'}</button>`
@@ -1250,11 +1261,7 @@ function renderUploadCards(){
       </div>
       ${loaded && loaded.fileName ? `<div class="filename">${d.accumulate ? 'Último archivo: ' : ''}${loaded.fileName}</div>` : ''}
       ${d.accumulate && loaded && loaded.batches && loaded.batches.length ? `<div class="filename" style="margin-top:4px;">${loaded.batches.slice(-3).map(b=>`${b.fileName} (+${fmtInt(b.addedCount!==undefined?b.addedCount:b.rowCount)})`).join(' · ')}${loaded.batches.length>3?' · …':''}</div>` : ''}
-      ${d.key==='reporte' ? `
-      <div class="drive-folder-sync">
-        <button type="button" id="btnSyncDriveReporte">☁ Sincronizar carpeta "Reportes de Dispensación" (Drive)</button>
-        <div class="sync-status" id="driveSyncStatus"></div>
-      </div>` : ''}
+      ${driveSyncHtml}
     `;
     grid.appendChild(card);
   });
