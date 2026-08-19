@@ -12,6 +12,9 @@
 <!-- Firebase SDK (compat) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<!-- Google Drive: Identity Services (login/OAuth) + API Client (gapi) — independiente de Firebase, ambas plataformas conviven -->
+<script src="https://accounts.google.com/gsi/client"></script>
+<script src="https://apis.google.com/js/api.js"></script>
 <script>
 // Firebase configuration — Medisfarma Indicadores
 const firebaseConfig = {
@@ -97,6 +100,27 @@ header.top{
 .dot{width:7px;height:7px;border-radius:50%;background:var(--line);}
 .dot.on{background:var(--green);box-shadow:0 0 0 3px var(--green-soft);}
 .dot.warn{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft);}
+
+/* ---------- Google Drive ---------- */
+.drive-status{
+  display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:11.5px;
+  color:var(--ink-soft);background:var(--bg);border:1px solid var(--line);
+  padding:6px 8px 6px 14px;border-radius:100px;
+}
+.drive-status button{
+  font-family:var(--body);font-size:11.5px;font-weight:600;color:var(--white);
+  background:var(--blue);border:none;padding:6px 12px;border-radius:100px;cursor:pointer;
+  white-space:nowrap;transition:background .15s;
+}
+.drive-status button:hover{background:var(--blue-deep);}
+.drive-status button:disabled{background:var(--line);color:var(--ink-soft);cursor:not-allowed;}
+.drive-status button.btn-disconnect{background:none;color:var(--ink-soft);border:1px solid var(--line);}
+.drive-status button.btn-disconnect:hover{background:var(--red-soft);color:var(--red);border-color:var(--red);}
+.drive-autobackup{
+  display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);
+  font-family:var(--body);white-space:nowrap;
+}
+.drive-autobackup input{cursor:pointer;}
 
 nav.tabs{display:flex;gap:6px;margin-bottom:26px;border-bottom:1px solid var(--line);}
 .persistence-warning{
@@ -300,6 +324,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <span class="dot" id="dbDot"></span>
       <span id="dbStatusText">Sin datos guardados en este navegador</span>
     </div>
+    <div class="drive-status" id="driveStatusBar">
+      <span class="dot" id="driveDot"></span>
+      <span id="driveStatusText">Google Drive: no conectado</span>
+      <button id="btnDriveConnect" type="button">Conectar Google Drive</button>
+      <button id="btnDriveDisconnect" type="button" class="btn-disconnect" style="display:none;">Desconectar</button>
+    </div>
   </header>
 
   <div class="persistence-warning" id="persistenceWarning" style="display:none;">
@@ -344,6 +374,10 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <div class="field grow"><label>EPS Consolidada</label><select id="fEpsGrupo"><option value="">Todas</option></select></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
+      <div class="field drive-autobackup" id="driveAutobackupField" style="display:none;">
+        <input type="checkbox" id="chkDriveAutoBackup" checked>
+        <label for="chkDriveAutoBackup" style="margin:0;">También guardar en Google Drive</label>
+      </div>
       <div class="field" style="margin-left:auto;"><label>&nbsp;</label><button class="btn btn-export" id="btnExportar">⬇ Exportar a Excel</button></div>
     </div>
 
@@ -2204,7 +2238,206 @@ function renderIndicadorSoporteEvento(rowsEvento, bodegaSearch, zona){
 }
 
 /* =========================================================================
-   13. Exportar a Excel
+   13. Google Drive — respaldo en la nube (independiente de Firebase)
+   Ambas integraciones conviven: Firebase Firestore sigue siendo la fuente
+   de verdad para los datos cargados/calculados; Google Drive se usa además
+   como destino opcional para guardar copias de los archivos exportados
+   (.xlsx) directamente en la cuenta de Google del usuario.
+   Se usa el scope 'drive.file': la app solo puede ver/editar los archivos
+   que ella misma crea en el Drive del usuario, nunca el resto de su Drive.
+   ========================================================================= */
+const GOOGLE_CLIENT_ID = '910136414090-96oen7683vu65coq3g78qc08m35rk3e6.apps.googleusercontent.com';
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const GOOGLE_DRIVE_FOLDER_NAME = 'Medisfarma Indicadores - Respaldo';
+
+let gapiClientReady = false;
+let driveTokenClient = null;
+let driveAccessToken = null;
+let driveTokenExpiresAt = 0;
+let driveFolderId = null;
+let driveConnected = false;
+
+function updateDriveUI(connected, statusMsg){
+  const dot = document.getElementById('driveDot');
+  const txt = document.getElementById('driveStatusText');
+  const btnConnect = document.getElementById('btnDriveConnect');
+  const btnDisconnect = document.getElementById('btnDriveDisconnect');
+  const autobackupField = document.getElementById('driveAutobackupField');
+  driveConnected = connected;
+  if(connected){
+    dot.className = 'dot on';
+    txt.textContent = statusMsg || 'Google Drive: conectado';
+    btnConnect.style.display = 'none';
+    btnDisconnect.style.display = 'inline-block';
+    if(autobackupField) autobackupField.style.display = 'flex';
+  } else {
+    dot.className = 'dot';
+    txt.textContent = statusMsg || 'Google Drive: no conectado';
+    btnConnect.style.display = 'inline-block';
+    btnDisconnect.style.display = 'none';
+    if(autobackupField) autobackupField.style.display = 'none';
+  }
+}
+
+// Carga gapi.client y el módulo REST de Drive v3 (solo la primera vez que hace falta).
+function ensureGapiClient(){
+  return new Promise((resolve, reject) => {
+    if(gapiClientReady){ resolve(); return; }
+    if(typeof gapi === 'undefined'){
+      reject(new Error('No se pudo cargar la librería de Google (apis.google.com/js/api.js). Verifica tu conexión a internet.'));
+      return;
+    }
+    gapi.load('client', async () => {
+      try {
+        await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
+        gapiClientReady = true;
+        resolve();
+      } catch(e){ reject(e); }
+    });
+  });
+}
+
+// Crea (una sola vez) el cliente de token de Google Identity Services.
+function ensureDriveTokenClient(){
+  if(driveTokenClient) return driveTokenClient;
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
+    throw new Error('No se pudo cargar Google Identity Services (accounts.google.com/gsi/client). Verifica tu conexión a internet.');
+  }
+  driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_DRIVE_SCOPE,
+    callback: '' // se asigna en cada solicitud, ver requestDriveAccessToken()
+  });
+  return driveTokenClient;
+}
+
+// Pide (o renueva) el token de acceso. interactive=true muestra el selector
+// de cuenta / pantalla de consentimiento de Google si hace falta.
+function requestDriveAccessToken(interactive){
+  return new Promise((resolve, reject) => {
+    try {
+      const client = ensureDriveTokenClient();
+      client.callback = (resp) => {
+        if(resp.error){ reject(resp); return; }
+        driveAccessToken = resp.access_token;
+        driveTokenExpiresAt = Date.now() + ((resp.expires_in || 3600) - 60) * 1000;
+        gapi.client.setToken({ access_token: driveAccessToken });
+        resolve(driveAccessToken);
+      };
+      client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+    } catch(e){ reject(e); }
+  });
+}
+
+// Garantiza tener un token vigente, renovándolo en silencio si expiró.
+async function ensureFreshDriveToken(){
+  if(driveAccessToken && Date.now() < driveTokenExpiresAt) return driveAccessToken;
+  return requestDriveAccessToken(false);
+}
+
+// Busca (o crea si no existe) la carpeta de respaldo en el Drive del usuario.
+async function ensureDriveFolder(){
+  if(driveFolderId) return driveFolderId;
+  const safeName = GOOGLE_DRIVE_FOLDER_NAME.replace(/'/g, "\\'");
+  const q = `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const res = await gapi.client.drive.files.list({ q, fields: 'files(id,name)', spaces: 'drive' });
+  const files = (res.result && res.result.files) || [];
+  if(files.length){ driveFolderId = files[0].id; return driveFolderId; }
+  const createRes = await gapi.client.drive.files.create({
+    resource: { name: GOOGLE_DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' },
+    fields: 'id'
+  });
+  driveFolderId = createRes.result.id;
+  return driveFolderId;
+}
+
+// Sube un Blob a Drive dentro de la carpeta de respaldo (multipart upload).
+// Reintenta una vez pidiendo un token nuevo si el primero fue rechazado (401).
+async function uploadBlobToDrive(blob, filename, mimeType){
+  await ensureGapiClient();
+  await ensureFreshDriveToken();
+  await ensureDriveFolder();
+
+  const doUpload = async (token) => {
+    const metadata = { name: filename, mimeType, parents: [driveFolderId] };
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', blob, filename);
+    return fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: form
+    });
+  };
+
+  let resp = await doUpload(driveAccessToken);
+  if(resp.status === 401){
+    await requestDriveAccessToken(true);
+    resp = await doUpload(driveAccessToken);
+  }
+  if(!resp.ok){
+    const errText = await resp.text().catch(()=> '');
+    throw new Error('Error subiendo a Google Drive (HTTP ' + resp.status + '): ' + errText);
+  }
+  return resp.json();
+}
+
+// Convierte un workbook de SheetJS en un Blob .xlsx listo para subir a Drive.
+function workbookToBlob(wb){
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+// Punto único de exportación: siempre descarga localmente (comportamiento
+// previo intacto) y, si el usuario está conectado a Drive y dejó marcada
+// la opción de respaldo automático, también sube una copia a su Drive.
+function exportWorkbook(wb, filename){
+  XLSX.writeFile(wb, filename);
+  const chk = document.getElementById('chkDriveAutoBackup');
+  if(driveConnected && chk && chk.checked){
+    const blob = workbookToBlob(wb);
+    uploadBlobToDrive(blob, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .then(() => showToast('Copia guardada en Google Drive: ' + filename))
+      .catch(err => {
+        console.error('[Drive] Error al subir', filename, err);
+        showToast('No se pudo guardar la copia en Google Drive.', true);
+      });
+  }
+}
+
+document.getElementById('btnDriveConnect').addEventListener('click', async () => {
+  const btn = document.getElementById('btnDriveConnect');
+  btn.disabled = true; btn.textContent = 'Conectando…';
+  try {
+    await ensureGapiClient();
+    await requestDriveAccessToken(true);
+    await ensureDriveFolder();
+    updateDriveUI(true);
+    showToast('Conectado a Google Drive.');
+  } catch(err){
+    console.error('[Drive] Error al conectar:', err);
+    updateDriveUI(false, 'Google Drive: error al conectar');
+    showToast('No se pudo conectar con Google Drive. Verifica tu conexión e inténtalo de nuevo.', true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Conectar Google Drive';
+  }
+});
+
+document.getElementById('btnDriveDisconnect').addEventListener('click', () => {
+  try {
+    if(driveAccessToken && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2){
+      google.accounts.oauth2.revoke(driveAccessToken, () => {});
+    }
+  } catch(e){ /* no crítico */ }
+  driveAccessToken = null;
+  driveTokenExpiresAt = 0;
+  driveFolderId = null;
+  updateDriveUI(false);
+  showToast('Google Drive desconectado.');
+});
+
+/* =========================================================================
+   14. Exportar a Excel
    ========================================================================= */
 document.getElementById('btnExportar').addEventListener('click', ()=>{
   if(!lastTables.dispensa.length && !lastTables.linea.length && !lastTables.soporte.length){
@@ -2269,7 +2502,7 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
   }
 
   const fecha=new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `Indicadores_Dispensacion_${fecha}.xlsx`);
+  exportWorkbook(wb, `Indicadores_Dispensacion_${fecha}.xlsx`);
   showToast('Excel exportado.');
 });
 
@@ -2296,7 +2529,7 @@ document.getElementById('btnDescargarParetoExistencias').addEventListener('click
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(enElPunto.length?enElPunto:[{'Sin datos':''}]), 'Existencia en el Punto');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(enBodegaPrincipal.length?enBodegaPrincipal:[{'Sin datos':''}]), 'Existencia en Bodega Principal');
   const fecha=new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `Pareto_NoPareto_Existencias_${fecha}.xlsx`);
+  exportWorkbook(wb, `Pareto_NoPareto_Existencias_${fecha}.xlsx`);
   showToast('Excel de Pareto/No Pareto exportado.');
 });
 
@@ -2323,7 +2556,7 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(aComprar), 'Codigos a Comprar');
   const fecha=new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `Codigos_a_Comprar_${fecha}.xlsx`);
+  exportWorkbook(wb, `Codigos_a_Comprar_${fecha}.xlsx`);
   showToast('Excel de Códigos a Comprar exportado: '+fmtInt(aComprar.length)+' líneas.');
 });
 
