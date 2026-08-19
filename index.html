@@ -26,16 +26,21 @@ const firebaseConfig = {
   appId: "1:947919909003:web:5f9328c7e28ccf10b1e5c4"
 };
 let dbFirestore = null;
+
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
     if (!firebase.apps.length) {
-        firebase.initializeApp(firebaseConfig);
+      firebase.initializeApp(firebaseConfig);
     }
     dbFirestore = firebase.firestore();
+
     // Asignar instancias globales para el resto del código
-       window.dbFirestore = dbFirestore;
-       window.db = dbFirestore;
+    window.dbFirestore = dbFirestore;
+    window.db = dbFirestore;
+
     console.log('[Init] Firebase Firestore inicializado correctamente.');
+  } else {
+    console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
   }
 } catch (e) {
   console.error('[Init] Error al inicializar Firebase:', e);
@@ -815,6 +820,13 @@ function isFirestoreReady(){
 }
 
 function activarModoMemoria(err){
+  // Verificar si Firestore está realmente conectado antes de activar el modo de advertencia
+  if (dbFirestore || window.dbFirestore || window.db) {
+    console.log('[Firebase] Conexión disponible — no se muestra alerta amarilla.');
+    const warn = document.getElementById('persistenceWarning');
+    if (warn) warn.style.display = 'none';
+    return;
+  }
   dbFailed = true;
   console.warn('Firebase no disponible, usando memoria temporal (sin persistencia en la nube):', err);
   if (modoMemoriaAvisado) return;
@@ -1169,10 +1181,11 @@ async function refreshStatusFromDB(){
 function updateTopStatus(){
   const dot=document.getElementById('dbDot'); const txt=document.getElementById('dbStatusText');
   const n=Object.keys(state.loaded).length;
-  const modo = dbFailed ? ' (modo local, sin sincronización en la nube)' : '';
-  if(n===0){ dot.className='dot'+(dbFailed?' warn':''); txt.textContent='Sin datos cargados'+modo; }
+  const firestoreOk = dbFirestore || window.dbFirestore || window.db;
+  const modo = dbFailed && !firestoreOk ? ' (modo local, sin sincronización en la nube)' : (firestoreOk ? ' — sincronización en la nube activa' : '');
+  if(n===0){ dot.className='dot'+((dbFailed && !firestoreOk)?' warn':''); txt.textContent='Sin datos cargados'+modo; }
   else{
-    dot.className='dot'+(dbFailed?' warn':' on');
+    dot.className='dot'+((dbFailed && !firestoreOk)?' warn':' on');
     const totalRows=Object.values(state.loaded).reduce((a,b)=>a+b.rowCount,0);
     txt.textContent=n+' fuente(s) cargadas · '+fmtInt(totalRows)+' filas en total'+modo;
   }
@@ -2806,8 +2819,13 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
-  // Si Firebase no está disponible, cargar datos desde localStorage
-  if (!isFirestoreReady()) {
+  // Si Firebase está conectado, ocultar la alerta amarilla y actualizar indicador
+  if (isFirestoreReady()) {
+    console.log('[Init] Firebase Firestore disponible — ocultando alerta de advertencia.');
+    const warn = document.getElementById('persistenceWarning');
+    if (warn) warn.style.display = 'none';
+    dbFailed = false;
+  } else {
     console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
     const lsRecords = lsGetAll();
     if (lsRecords.length > 0) {
