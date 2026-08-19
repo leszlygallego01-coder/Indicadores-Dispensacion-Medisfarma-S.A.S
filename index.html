@@ -12,7 +12,6 @@
 <!-- Firebase SDK (compat) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <!-- Google Drive: Identity Services (login/OAuth) + API Client (gapi) — independiente de Firebase, ambas plataformas conviven -->
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://apis.google.com/js/api.js"></script>
@@ -38,20 +37,6 @@ try {
     // Asignar instancias globales para el resto del código
     window.dbFirestore = dbFirestore;
     window.db = dbFirestore;
-
-    // Inicializar Firebase Storage para Reporte de Dispensación (archivos grandes)
-    try {
-      if (typeof firebase.storage === 'function') {
-        window.dbStorage = firebase.storage();
-        console.log('[Init] Firebase Storage inicializado correctamente.');
-      } else {
-        console.warn('[Init] firebase.storage no es una función — SDK de Storage no cargado.');
-        window.dbStorage = null;
-      }
-    } catch (storageErr) {
-      console.warn('[Init] Firebase Storage no disponible:', storageErr);
-      window.dbStorage = null;
-    }
 
     console.log('[Init] Firebase Firestore inicializado correctamente.');
   } else {
@@ -962,11 +947,6 @@ async function idbPut(record) {
       if(Number(d.id) >= chunks.length) writes.push({ ref: d.ref, type:'delete' });
     });
     await commitWritesInBatches(writes);
-    // Si es el Reporte de Dispensación, subir también a Firebase Storage
-    // (para datasets grandes que superan el límite de Firestore).
-    if(record.key === 'reporte'){
-      storageUploadReporte(record); // fire-and-forget, no bloquea el flujo
-    }
   } catch (err) {
     activarModoMemoria(err);
     memoryStore.set(record.key, record);
@@ -976,60 +956,20 @@ async function idbPut(record) {
   }
 }
 async function idbGetAll() {
-  // Para el Reporte de Dispensación, intentar Firebase Storage primero
-  // (soporta datasets >1 MB que Firestore no puede manejar).
-  let storageReporte = null;
-  if(isStorageReady()){
-    try {
-      storageReporte = await storageDownloadReporte();
-    } catch(e){ /* ignorar, caer en Firestore/localStorage */ }
-  }
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const snap = await dbFirestore.collection(COLLECTION).get();
     const records = await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d)));
-    const filtered = records.filter(Boolean);
-    // Si tenemos el reporte de Storage (más completo), reemplazar el de Firestore
-    if(storageReporte){
-      const idx = filtered.findIndex(r => r.key === 'reporte');
-      if(idx >= 0){
-        filtered[idx] = storageReporte;
-      } else {
-        filtered.push(storageReporte);
-      }
-    }
-    return filtered;
+    return records.filter(Boolean);
   } catch (err) {
     activarModoMemoria(err);
     // Intentar localStorage primero, luego memoryStore
     const lsRecords = lsGetAll();
-    if (lsRecords.length > 0){
-      // Si tenemos el reporte de Storage, reemplazar
-      if(storageReporte){
-        const idx = lsRecords.findIndex(r => r.key === 'reporte');
-        if(idx >= 0) lsRecords[idx] = storageReporte;
-        else lsRecords.push(storageReporte);
-      }
-      return lsRecords;
-    }
-    if(storageReporte){
-      const memRecords = Array.from(memoryStore.values());
-      const idx = memRecords.findIndex(r => r.key === 'reporte');
-      if(idx >= 0) memRecords[idx] = storageReporte;
-      else memRecords.push(storageReporte);
-      return memRecords;
-    }
+    if (lsRecords.length > 0) return lsRecords;
     return Array.from(memoryStore.values());
   }
 }
 async function idbGet(key) {
-  // Para el Reporte de Dispensación, priorizar Firebase Storage
-  if(key === 'reporte' && isStorageReady()){
-    try {
-      const storageRec = await storageDownloadReporte();
-      if(storageRec) return storageRec;
-    } catch(e){ /* caer en Firestore/localStorage */ }
-  }
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const doc = await dbFirestore.collection(COLLECTION).doc(key).get();
@@ -1046,8 +986,6 @@ async function idbGet(key) {
 async function idbDelete(key) {
   // Siempre eliminar de localStorage también
   lsDelete(key);
-  // Si es el reporte, eliminar también de Storage
-  if(key === 'reporte') storageDeleteReporte(); // fire-and-forget
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1077,102 +1015,11 @@ async function idbClearAll() {
       writes.push({ ref: d.ref, type:'delete' });
     }
     await commitWritesInBatches(writes);
-    // Eliminar también el archivo de reporte en Storage
-    storageDeleteReporte(); // fire-and-forget
   } catch (err) {
     activarModoMemoria(err);
     memoryStore.clear();
   } finally {
     setTimeout(() => { _localWriteActive = false; }, 500);
-  }
-}
-
-/* --- Firebase Storage: Reporte de Dispensación (datasets >1 MB) ---
-   Firestore tiene un límite de ~1 MB por documento; incluso con fragmentación
-   el costo total de un Reporte de Dispensación grande (120K+ filas) supera
-   los límites operativos. Por eso, el dataset con key='reporte' se guarda
-   como archivo JSON en Firebase Storage, y se descarga al iniciar la app.  */
-const STORAGE_REPORT_PATH = 'datasets/reporte_dispensacion.json';
-
-function isStorageReady(){
-  return typeof window.dbStorage !== 'undefined' && window.dbStorage !== null;
-}
-
-// Subir el Reporte de Dispensación como archivo JSON a Firebase Storage.
-// Se llama DESPUÉS de guardar localmente en IndexedDB/Firestore chunks.
-async function storageUploadReporte(record){
-  if(!isStorageReady()){
-    console.warn('[Storage] Firebase Storage no disponible — no se sube reporte.');
-    return;
-  }
-  if(record.key !== 'reporte') return; // solo el reporte de dispensación
-  try {
-    const payload = JSON.stringify({
-      key: record.key,
-      fileName: record.fileName || '',
-      updatedAt: record.updatedAt || new Date().toISOString(),
-      batches: record.batches || null,
-      rows: record.rows
-    });
-    const blob = new Blob([payload], { type: 'application/json' });
-    const ref = window.dbStorage.ref().child(STORAGE_REPORT_PATH);
-    const uploadTask = ref.put(blob);
-    await new Promise((resolve, reject) => {
-      uploadTask.on('state_changed',
-        null,
-        reject,
-        () => resolve(uploadTask.snapshot.ref)
-      );
-    });
-    console.log('[Storage] Reporte de Dispensación subido a Storage (' +
-      (payload.length / 1024 / 1024).toFixed(2) + ' MB).');
-  } catch (err) {
-    console.warn('[Storage] Error subiendo reporte a Storage:', err);
-  }
-}
-
-// Descargar el Reporte de Dispensación desde Firebase Storage.
-// Retorna el record {key, rows, fileName, batches, updatedAt} o null.
-async function storageDownloadReporte(){
-  if(!isStorageReady()){
-    console.warn('[Storage] Firebase Storage no disponible — no se descarga reporte.');
-    return null;
-  }
-  try {
-    const ref = window.dbStorage.ref().child(STORAGE_REPORT_PATH);
-    const url = await ref.getDownloadURL();
-    const resp = await fetch(url);
-    if(!resp.ok) throw new Error('HTTP ' + resp.status);
-    const text = await resp.text();
-    const data = JSON.parse(text);
-    if(data.key !== 'reporte' || !Array.isArray(data.rows)){
-      console.warn('[Storage] Archivo en Storage no es un reporte válido.');
-      return null;
-    }
-    console.log('[Storage] Reporte de Dispensación descargado de Storage (' +
-      (text.length / 1024 / 1024).toFixed(2) + ' MB, ' + data.rows.length + ' filas).');
-    return { key: data.key, rows: data.rows, fileName: data.fileName || '', batches: data.batches || null, updatedAt: data.updatedAt || '' };
-  } catch (err) {
-    // Si el archivo no existe (404) no es un error — simplemente no hay datos en Storage.
-    if(err.code === 'storage/object-not-found' || (err.message && err.message.includes('404'))){
-      console.log('[Storage] No hay archivo de reporte en Storage (primera vez o fue borrado).');
-    } else {
-      console.warn('[Storage] Error descargando reporte de Storage:', err);
-    }
-    return null;
-  }
-}
-
-// Eliminar el archivo de reporte de Storage (al limpiar todo).
-async function storageDeleteReporte(){
-  if(!isStorageReady()) return;
-  try {
-    const ref = window.dbStorage.ref().child(STORAGE_REPORT_PATH);
-    await ref.delete();
-    console.log('[Storage] Archivo de reporte eliminado de Storage.');
-  } catch (err) {
-    if(err.code === 'storage/object-not-found') return; // ya no existía
-    console.warn('[Storage] Error eliminando reporte de Storage:', err);
   }
 }
 
@@ -1200,21 +1047,6 @@ function startFirestoreListener(){
           batches: data.batches || null
         };
       });
-      // Si el Reporte de Dispensación fue cargado desde Storage, mantener sus datos
-      // (pueden ser más completos que lo que Firestore reporta por sus límites de tamaño).
-      const storageReporteMeta = memoryStore.get('reporte');
-      if(storageReporteMeta && storageReporteMeta.rows){
-        const storageRowCount = storageReporteMeta.rows.length;
-        const fsRowCount = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
-        if(storageRowCount > fsRowCount){
-          state.loaded['reporte'] = {
-            rowCount: storageRowCount,
-            fileName: storageReporteMeta.fileName,
-            updatedAt: storageReporteMeta.updatedAt,
-            batches: storageReporteMeta.batches || null
-          };
-        }
-      }
       renderUploadCards();
       updateTopStatus();
       updateCalcButton();
@@ -2987,94 +2819,42 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
-  try {
-    // Si Firebase está conectado, ocultar la alerta amarilla y actualizar indicador
-    if (isFirestoreReady()) {
-      console.log('[Init] Firebase Firestore disponible — ocultando alerta de advertencia.');
-      const warn = document.getElementById('persistenceWarning');
-      if (warn) warn.style.display = 'none';
-      dbFailed = false;
+  // Si Firebase está conectado, ocultar la alerta amarilla y actualizar indicador
+  if (isFirestoreReady()) {
+    console.log('[Init] Firebase Firestore disponible — ocultando alerta de advertencia.');
+    const warn = document.getElementById('persistenceWarning');
+    if (warn) warn.style.display = 'none';
+    dbFailed = false;
+  } else {
+    console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
+    const lsRecords = lsGetAll();
+    if (lsRecords.length > 0) {
+      state.loaded = {};
+      lsRecords.forEach(rec => {
+        // También sincronizar al memoryStore
+        memoryStore.set(rec.key, rec);
+        state.loaded[rec.key] = {
+          rowCount: rec.rows.length,
+          fileName: rec.fileName,
+          updatedAt: rec.updatedAt,
+          batches: rec.batches || null
+        };
+      });
     }
-
-    // Intentar descargar el Reporte de Dispensación desde Firebase Storage primero.
-    // Esto permite cargar datasets grandes (>1 MB) que Firestore no puede manejar.
-    if (isStorageReady()) {
-      try {
-        const storageReporte = await storageDownloadReporte();
-        if (storageReporte) {
-          console.log('[Init] Reporte de Dispensación cargado desde Storage (' + storageReporte.rows.length + ' filas).');
-          // Guardar en localStorage como respaldo local inmediato
-          lsPut('reporte', storageReporte);
-          memoryStore.set('reporte', storageReporte);
-          state.loaded['reporte'] = {
-            rowCount: storageReporte.rows.length,
-            fileName: storageReporte.fileName,
-            updatedAt: storageReporte.updatedAt,
-            batches: storageReporte.batches || null
-          };
-        }
-      } catch (e) {
-        console.warn('[Init] No se pudo descargar reporte de Storage:', e);
-      }
+  }
+  renderUploadCards();
+  await refreshStatusFromDB();
+  startFirestoreListener();
+  showEmptyResults();
+  // Verificar disponibilidad de XLSX
+  if (typeof XLSX === 'undefined') {
+    console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
+      toast.className = 'toast error';
+      setTimeout(() => { toast.className = 'toast'; }, 8000);
     }
-
-    // Si Firebase no está disponible, cargar localStorage como respaldo
-    if (!isFirestoreReady() && !isStorageReady()) {
-      console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
-      const lsRecords = lsGetAll();
-      if (lsRecords.length > 0) {
-        lsRecords.forEach(rec => {
-          memoryStore.set(rec.key, rec);
-          state.loaded[rec.key] = {
-            rowCount: rec.rows.length,
-            fileName: rec.fileName,
-            updatedAt: rec.updatedAt,
-            batches: rec.batches || null
-          };
-        });
-      }
-    }
-
-    // Renderizar tarjetas SIEMPRE — incluso si los pasos previos fallaron
-    renderUploadCards();
-
-    // Actualizar estado desde la base de datos (puede fallar, no es crítico)
-    try {
-      await refreshStatusFromDB();
-    } catch (e) {
-      console.warn('[Init] Error en refreshStatusFromDB:', e);
-      // Asegurar que las tarjetas se muestren aunque refresh falle
-      renderUploadCards();
-      updateTopStatus();
-      updateCalcButton();
-    }
-
-    // Iniciar listener de Firestore (puede fallar, no es crítico para la UI)
-    try {
-      startFirestoreListener();
-    } catch (e) {
-      console.warn('[Init] Error iniciando Firestore listener:', e);
-    }
-
-    showEmptyResults();
-
-    // Verificar disponibilidad de XLSX
-    if (typeof XLSX === 'undefined') {
-      console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
-      const toast = document.getElementById('toast');
-      if (toast) {
-        toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
-        toast.className = 'toast error';
-        setTimeout(() => { toast.className = 'toast'; }, 8000);
-      }
-    }
-  } catch (fatalErr) {
-    // Captura cualquier error no previsto — la UI debe seguir funcionando
-    console.error('[Init] Error fatal en init():', fatalErr);
-    // Siempre renderizar las tarjetas como último recurso
-    try { renderUploadCards(); } catch(e) { console.error('[Init] No se pudieron renderizar las tarjetas:', e); }
-    try { updateTopStatus(); } catch(e) {}
-    try { updateCalcButton(); } catch(e) {}
   }
 })();
 </script>
