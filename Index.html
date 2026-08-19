@@ -788,40 +788,80 @@ function activarModoMemoria(err){
 }
 let modoMemoriaAvisado = false;
 
-/* --- Serialización para Firestore (1 MB límite por documento) --- */
-// Firestore limita cada documento a ~1 MB. Para datasets grandes serializamos
-// el array `rows` como JSON string en el campo `rowsJSON` y lo guardamos por
-// fragmentos si es necesario.
-const FIRESTORE_DOC_LIMIT = 900000; // bytes, margen de seguridad
+/* --- Serialización para Firestore (1 MB límite por documento) ---
+   Firestore limita cada documento a ~1 MB, sin importar si el contenido
+   pesado va como array nativo o como un solo string JSON dentro de un
+   campo: el límite es del documento completo. Por eso, para datasets
+   grandes, las filas (`rows`) se dividen automáticamente en fragmentos
+   ("chunks") y cada fragmento se guarda como un documento aparte dentro
+   de una subcolección. El documento principal ("meta") sólo guarda datos
+   ligeros (nombre de archivo, cantidad de filas, lotes) y la cantidad de
+   fragmentos. Así, sin importar qué tan pesado sea el Excel cargado, el
+   cargue se reparte automáticamente en la cantidad de fragmentos que
+   hagan falta y nunca se supera el límite de Firestore. */
+const CHUNK_BYTE_LIMIT = 700000; // bytes por fragmento, con margen de seguridad bajo el límite de 1 MB
+const BATCH_WRITE_LIMIT = 450;   // margen de seguridad bajo el límite de 500 operaciones por batch de Firestore
 
 function utf8ByteLength(s){
-  return new Blob([s]).size;
+  return new TextEncoder().encode(s).length;
 }
-function serializeForFirestore(record){
-  // Si rows es pequeño, se guarda directamente como array.
-  // Si es grande, se serializa como JSON string en rowsJSON.
-  const rowsCopy = record.rows;
-  const testJSON = JSON.stringify(rowsCopy);
-  if(utf8ByteLength(testJSON) < FIRESTORE_DOC_LIMIT){
-    // cabe como array nativo
-    return { key: record.key, rows: rowsCopy, fileName: record.fileName || '',
-             batches: record.batches || null, updatedAt: record.updatedAt || new Date().toISOString() };
+
+// Divide el arreglo de filas en fragmentos que quepan holgadamente en un documento de Firestore.
+function chunkRowsForFirestore(rows){
+  const chunks = [];
+  let current = [];
+  let currentSize = 2; // "[]"
+  for(const row of rows){
+    const rowSize = utf8ByteLength(JSON.stringify(row)) + 1; // +1 por el separador ","
+    if(current.length && (currentSize + rowSize) > CHUNK_BYTE_LIMIT){
+      chunks.push(current);
+      current = [];
+      currentSize = 2;
+    }
+    current.push(row);
+    currentSize += rowSize;
   }
-  // Demasiado grande: serializar rows como string
-  return { key: record.key, rowsJSON: testJSON, fileName: record.fileName || '',
-           batches: record.batches ? JSON.stringify(record.batches) : null,
-           updatedAt: record.updatedAt || new Date().toISOString() };
+  if(current.length || chunks.length===0) chunks.push(current);
+  return chunks;
 }
-function deserializeFromFirestore(doc){
-  if(!doc.exists) return null;
-  const d = doc.data();
-  let rows = d.rows || [];
-  if(d.rowsJSON){
-    try { rows = JSON.parse(d.rowsJSON); } catch(e){ console.error('Error parsing rowsJSON for', d.key, e); rows = []; }
+
+// Ejecuta una lista de operaciones de escritura/eliminación repartidas en varios
+// batches (Firestore permite máximo ~500 operaciones por batch).
+async function commitWritesInBatches(writes){
+  for(let i=0; i<writes.length; i+=BATCH_WRITE_LIMIT){
+    const slice = writes.slice(i, i+BATCH_WRITE_LIMIT);
+    const batch = dbFirestore.batch();
+    slice.forEach(w => {
+      if(w.type==='delete') batch.delete(w.ref);
+      else batch.set(w.ref, w.data, {merge:true});
+    });
+    await batch.commit();
+  }
+}
+
+// Reconstruye un registro completo (con todas sus filas) a partir del documento
+// "meta" y, si aplica, de sus fragmentos en la subcolección "chunks".
+async function fetchRecordFromMeta(metaDoc){
+  const d = metaDoc.data();
+  let rows = [];
+  const chunkCount = d.chunkCount || 0;
+  if(chunkCount > 0){
+    const chunksSnap = await metaDoc.ref.collection('chunks').get();
+    const parts = chunksSnap.docs.map(cd => cd.data()).sort((a,b)=> a.index - b.index);
+    parts.forEach(p => {
+      try { rows = rows.concat(JSON.parse(p.rowsJSON)); }
+      catch(e){ console.error('Error leyendo fragmento', d.key, p.index, e); }
+    });
+  } else if (d.rowsJSON) {
+    // Compatibilidad con documentos guardados antes de este cambio.
+    try { rows = JSON.parse(d.rowsJSON); } catch(e){ rows = []; }
+  } else if (d.rows) {
+    // Compatibilidad con documentos antiguos guardados como array nativo.
+    rows = d.rows;
   }
   let batches = d.batches || null;
-  if(typeof d.batches === 'string'){
-    try { batches = JSON.parse(d.batches); } catch(e){ batches = null; }
+  if(typeof batches === 'string'){
+    try { batches = JSON.parse(batches); } catch(e){ batches = null; }
   }
   return { key: d.key, rows, fileName: d.fileName || '', batches, updatedAt: d.updatedAt || '' };
 }
@@ -832,19 +872,32 @@ async function idbPut(record) {
   // Siempre guardar en localStorage como respaldo persistente
   lsPut(record.key, record);
   _localWriteActive = true;
-  let docData = null;
-  try {
-    docData = serializeForFirestore(record);
-  } catch (serErr) {
-    console.warn('[idbPut] Error serializando datos para Firestore, guardando en memoria:', serErr);
-    activarModoMemoria(serErr);
-    memoryStore.set(record.key, record);
-    setTimeout(() => { _localWriteActive = false; }, 500);
-    return;
-  }
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
-    await dbFirestore.collection(COLLECTION).doc(record.key).set(docData, {merge:true});
+    const chunks = chunkRowsForFirestore(record.rows);
+    const metaRef = dbFirestore.collection(COLLECTION).doc(record.key);
+    const chunksRef = metaRef.collection('chunks');
+    // Detectar fragmentos previos que ya no se necesitan (p.ej. si el nuevo
+    // cargue tiene menos filas / menos fragmentos que el anterior).
+    const existingSnap = await chunksRef.get();
+    const writes = [];
+    writes.push({ ref: metaRef, type:'set', data: {
+      key: record.key,
+      fileName: record.fileName || '',
+      updatedAt: record.updatedAt || new Date().toISOString(),
+      batches: record.batches || null,
+      chunkCount: chunks.length,
+      rowCount: record.rows.length,
+      rows: firebase.firestore.FieldValue.delete(),
+      rowsJSON: firebase.firestore.FieldValue.delete()
+    }});
+    chunks.forEach((chunk, i) => {
+      writes.push({ ref: chunksRef.doc(String(i)), type:'set', data: { index: i, rowsJSON: JSON.stringify(chunk) } });
+    });
+    existingSnap.docs.forEach(d => {
+      if(Number(d.id) >= chunks.length) writes.push({ ref: d.ref, type:'delete' });
+    });
+    await commitWritesInBatches(writes);
   } catch (err) {
     activarModoMemoria(err);
     memoryStore.set(record.key, record);
@@ -857,7 +910,8 @@ async function idbGetAll() {
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const snap = await dbFirestore.collection(COLLECTION).get();
-    return snap.docs.map(d => deserializeFromFirestore(d)).filter(Boolean);
+    const records = await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d)));
+    return records.filter(Boolean);
   } catch (err) {
     activarModoMemoria(err);
     // Intentar localStorage primero, luego memoryStore
@@ -870,7 +924,8 @@ async function idbGet(key) {
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const doc = await dbFirestore.collection(COLLECTION).doc(key).get();
-    return deserializeFromFirestore(doc);
+    if(!doc.exists) return null;
+    return await fetchRecordFromMeta(doc);
   } catch (err) {
     activarModoMemoria(err);
     // Intentar localStorage primero, luego memoryStore
@@ -885,7 +940,11 @@ async function idbDelete(key) {
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
-    await dbFirestore.collection(COLLECTION).doc(key).delete();
+    const metaRef = dbFirestore.collection(COLLECTION).doc(key);
+    const chunksSnap = await metaRef.collection('chunks').get();
+    const writes = chunksSnap.docs.map(d => ({ ref: d.ref, type:'delete' }));
+    writes.push({ ref: metaRef, type:'delete' });
+    await commitWritesInBatches(writes);
   } catch (err) {
     activarModoMemoria(err);
     memoryStore.delete(key);
@@ -900,9 +959,13 @@ async function idbClearAll() {
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const snap = await dbFirestore.collection(COLLECTION).get();
-    const batch = dbFirestore.batch();
-    snap.docs.forEach(d => batch.delete(d.ref));
-    if(snap.docs.length) await batch.commit();
+    const writes = [];
+    for (const d of snap.docs) {
+      const chunksSnap = await d.ref.collection('chunks').get();
+      chunksSnap.docs.forEach(cd => writes.push({ ref: cd.ref, type:'delete' }));
+      writes.push({ ref: d.ref, type:'delete' });
+    }
+    await commitWritesInBatches(writes);
   } catch (err) {
     activarModoMemoria(err);
     memoryStore.clear();
@@ -922,22 +985,32 @@ function startFirestoreListener(){
     if(_localWriteActive){ return; }
     // Debounce: si llegan varios snaps rápidos, solo el último dispara
     clearTimeout(_snapshotDebounce);
-    _snapshotDebounce = setTimeout(() => {
-      const records = snap.docs.map(d => deserializeFromFirestore(d)).filter(Boolean);
+    _snapshotDebounce = setTimeout(async () => {
+      // 1) Actualizar de inmediato los metadatos livianos (conteo de filas,
+      //    nombre de archivo, lotes) SIN descargar los fragmentos completos.
       state.loaded = {};
-      records.forEach(rec => {
-        // Sincronizar a localStorage para persistencia local
-        lsPut(rec.key, rec);
-        state.loaded[rec.key] = {
-          rowCount: rec.rows.length,
-          fileName: rec.fileName,
-          updatedAt: rec.updatedAt,
-          batches: rec.batches || null
+      snap.docs.forEach(d => {
+        const data = d.data();
+        state.loaded[data.key || d.id] = {
+          rowCount: data.rowCount !== undefined ? data.rowCount : (Array.isArray(data.rows) ? data.rows.length : 0),
+          fileName: data.fileName,
+          updatedAt: data.updatedAt,
+          batches: data.batches || null
         };
       });
       renderUploadCards();
       updateTopStatus();
       updateCalcButton();
+      // 2) Sincronizar a localStorage sólo los documentos que realmente
+      //    cambiaron, descargando sus fragmentos completos únicamente
+      //    cuando hace falta.
+      const changed = snap.docChanges().filter(c => c.type==='added' || c.type==='modified');
+      for(const change of changed){
+        try {
+          const rec = await fetchRecordFromMeta(change.doc);
+          lsPut(rec.key, rec);
+        } catch(e){ console.warn('No se pudo sincronizar localStorage para', change.doc.id, e); }
+      }
       // Si ya hay un cálculo procesado y los datos cambiaron (vienen de otro
       // dispositivo), recalcular automáticamente.
       if(state.processed){
