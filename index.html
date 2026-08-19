@@ -26,6 +26,11 @@ const firebaseConfig = {
   appId: "1:947919909003:web:5f9328c7e28ccf10b1e5c4"
 };
 let dbFirestore = null;
+// Manejo de errores SILENCIOSO: si Firestore falla, está mal configurado, o el
+// usuario está sin conexión, la app NUNCA debe detenerse ni bloquear el resto de
+// los controles (p. ej. los botones de Google Drive). Cualquier error aquí se
+// atrapa, se registra solo en consola y la app sigue funcionando con
+// localStorage/memoria como respaldo (ver isFirestoreReady() más abajo).
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
     firebase.initializeApp(firebaseConfig);
@@ -33,9 +38,10 @@ try {
     console.log('[Init] Firebase Firestore inicializado correctamente.');
   } else {
     console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
+    dbFirestore = null;
   }
 } catch (e) {
-  console.error('[Init] Error al inicializar Firebase:', e);
+  console.warn('[Init] Firebase/Firestore no disponible (se continúa sin detener la app):', e);
   dbFirestore = null;
 }
 </script>
@@ -1266,7 +1272,7 @@ function renderUploadCards(){
     grid.appendChild(card);
   });
   const btnSyncDrive = document.getElementById('btnSyncDriveReporte');
-  if(btnSyncDrive) btnSyncDrive.addEventListener('click', syncReporteDesdeCarpetaDrive);
+  if(btnSyncDrive) btnSyncDrive.addEventListener('click', onClickSyncDriveReporte);
   grid.querySelectorAll('input[type=file]').forEach(inp=>{
     inp.addEventListener('change', e=>handleFileSelected(e.target.dataset.key, e.target.files[0]));
   });
@@ -2479,6 +2485,35 @@ function setDriveSyncButtonDisabled(disabled){
   if(btn) btn.disabled = disabled;
 }
 
+// Handler del CLIC del botón. Se separa de syncReporteDesdeCarpetaDrive() para
+// poder validar de inmediato lo mínimo indispensable (CLIENT_ID, librerías de
+// Google cargadas) y avisar con un alert() + console.log/error si algo falta,
+// en vez de que el botón "no haga nada" sin explicación.
+function onClickSyncDriveReporte(){
+  console.log('[Drive Sync] Clic en "Sincronizar carpeta Reportes de Dispensación (Drive)".');
+  try {
+    if (!GOOGLE_CLIENT_ID) {
+      throw new Error('Falta configurar el CLIENT_ID de Google (GOOGLE_CLIENT_ID) en el código.');
+    }
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+      throw new Error('No se pudo cargar Google Identity Services (accounts.google.com/gsi/client). Verifica tu conexión a internet o que el <script> esté incluido.');
+    }
+    if (typeof gapi === 'undefined') {
+      throw new Error('No se pudo cargar la librería de Google API (apis.google.com/js/api.js). Verifica tu conexión a internet.');
+    }
+    if (typeof XLSX === 'undefined') {
+      throw new Error('La librería SheetJS (XLSX) no está disponible para leer los archivos .xlsx. Recarga la página.');
+    }
+    // Validaciones básicas superadas: solicitar autenticación OAuth2 y sincronizar.
+    syncReporteDesdeCarpetaDrive();
+  } catch (err) {
+    console.error('[Drive Sync] No se pudo iniciar la sincronización:', err);
+    alert('No se pudo iniciar la sincronización con Google Drive:\n\n' + err.message);
+    setDriveSyncStatus('Error: ' + err.message);
+    setDriveSyncButtonDisabled(false);
+  }
+}
+
 // Orquesta la sincronización completa: conecta si hace falta, lista los .xlsx de la
 // carpeta "Reportes de Dispensación", descarga cada uno y lo acumula en 'reporte'.
 async function syncReporteDesdeCarpetaDrive(){
@@ -2486,7 +2521,7 @@ async function syncReporteDesdeCarpetaDrive(){
   setDriveSyncStatus('Conectando con Google Drive…');
   try{
     await ensureGapiClient();
-    await requestDriveAccessToken(true); // interactivo si no hay sesión/consentimiento aún
+    await requestDriveAccessToken(true); // interactivo: pide login/consentimiento con google.accounts.oauth2
     if(!driveConnected) updateDriveUI(true);
 
     setDriveSyncStatus('Buscando archivos .xlsx en "Reportes de Dispensación"…');
@@ -2503,7 +2538,7 @@ async function syncReporteDesdeCarpetaDrive(){
       setDriveSyncStatus('Procesando ' + procesados + '/' + files.length + ': ' + f.name + '…');
       const buf = await downloadDriveFileAsArrayBuffer(f.id);
       // Objeto "archivo" mínimo compatible con parseFile()/handleFileSelected(),
-      // que solo necesitan .name y .arrayBuffer().
+      // que solo necesitan .name y .arrayBuffer(); parseFile() usa XLSX.read() internamente.
       const pseudoFile = { name: f.name, arrayBuffer: async () => buf };
       const before = state.loaded['reporte'] ? state.loaded['reporte'].rowCount : 0;
       await handleFileSelected('reporte', pseudoFile); // acumula + refresca contador de filas y nombre de archivo en la UI
@@ -2517,6 +2552,7 @@ async function syncReporteDesdeCarpetaDrive(){
     console.error('[Drive Sync carpeta]', err);
     setDriveSyncStatus('Error al sincronizar con Google Drive.');
     showToast('Error al sincronizar con Google Drive: ' + err.message, true);
+    alert('Ocurrió un error durante la sincronización con Google Drive:\n\n' + err.message);
   }finally{
     setDriveSyncButtonDisabled(false);
   }
@@ -2943,37 +2979,48 @@ function renderReportePeriodico(){
    15. Init
    ========================================================================= */
 (async function init(){
-  // Si Firebase no está disponible, cargar datos desde localStorage
-  if (!isFirestoreReady()) {
-    console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
-    const lsRecords = lsGetAll();
-    if (lsRecords.length > 0) {
-      state.loaded = {};
-      lsRecords.forEach(rec => {
-        // También sincronizar al memoryStore
-        memoryStore.set(rec.key, rec);
-        state.loaded[rec.key] = {
-          rowCount: rec.rows.length,
-          fileName: rec.fileName,
-          updatedAt: rec.updatedAt,
-          batches: rec.batches || null
-        };
-      });
+  // Todo el arranque va en try/catch: si algo fallara aquí (p. ej. lectura de
+  // localStorage, o Firestore lento/caído), NO debe dejar la app a medio
+  // inicializar ni impedir que los botones (incl. Sincronizar Drive, que ya
+  // tiene su propio listener independiente) queden utilizables.
+  try {
+    // Si Firebase no está disponible, cargar datos desde localStorage
+    if (!isFirestoreReady()) {
+      console.log('[Init] Firebase no disponible — cargando datos desde localStorage.');
+      const lsRecords = lsGetAll();
+      if (lsRecords.length > 0) {
+        state.loaded = {};
+        lsRecords.forEach(rec => {
+          // También sincronizar al memoryStore
+          memoryStore.set(rec.key, rec);
+          state.loaded[rec.key] = {
+            rowCount: rec.rows.length,
+            fileName: rec.fileName,
+            updatedAt: rec.updatedAt,
+            batches: rec.batches || null
+          };
+        });
+      }
     }
-  }
-  renderUploadCards();
-  await refreshStatusFromDB();
-  startFirestoreListener();
-  showEmptyResults();
-  // Verificar disponibilidad de XLSX
-  if (typeof XLSX === 'undefined') {
-    console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
-    const toast = document.getElementById('toast');
-    if (toast) {
-      toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
-      toast.className = 'toast error';
-      setTimeout(() => { toast.className = 'toast'; }, 8000);
+    renderUploadCards();
+    await refreshStatusFromDB();
+    startFirestoreListener();
+    showEmptyResults();
+    // Verificar disponibilidad de XLSX
+    if (typeof XLSX === 'undefined') {
+      console.error('[Init] La librería XLSX no se pudo cargar. La subida de archivos no funcionará.');
+      const toast = document.getElementById('toast');
+      if (toast) {
+        toast.textContent = '⚠ Error: No se pudo cargar la librería para leer archivos Excel. Verifica tu conexión a internet y recarga la página.';
+        toast.className = 'toast error';
+        setTimeout(() => { toast.className = 'toast'; }, 8000);
+      }
     }
+  } catch (err) {
+    console.error('[Init] Error inesperado durante el arranque (la app continúa):', err);
+    // Aunque algo haya fallado arriba, garantizamos que las tarjetas (y sus
+    // botones, incl. el de Drive) queden renderizadas y utilizables.
+    try { renderUploadCards(); } catch(e2){ console.error('[Init] renderUploadCards también falló:', e2); }
   }
 })();
 </script>
