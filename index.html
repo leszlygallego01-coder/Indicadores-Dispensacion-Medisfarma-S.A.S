@@ -2769,7 +2769,8 @@ async function syncReporteDesdeCarpetaDrive(){
     }
     if(!files.length){
       setDriveSyncStatus('No se encontraron archivos .xlsx en la carpeta de Drive.');
-      showToast('No se encontraron archivos .xlsx en la carpeta "Reportes de Dispensación".', true);
+      setDriveSyncButtonDisabled(false);
+      alert('No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.');
       return;
     }
 
@@ -2799,8 +2800,15 @@ async function syncReporteDesdeCarpetaDrive(){
   }catch(err){
     console.error('[Drive Sync carpeta]', err);
     setDriveSyncStatus('Error al sincronizar con Google Drive.');
-    showToast('Error al sincronizar con Google Drive: ' + err.message, true);
-    alert('Error al sincronizar con Google Drive: ' + (err && err.message ? err.message : err));
+    setDriveSyncButtonDisabled(false);
+    // Detectar error de permisos de Drive (403 Forbidden o 404 Not Found)
+    const status = err && (err.status || err.code || (err.result && err.result.error && err.result.error.code));
+    const msg = err && err.message ? err.message : String(err);
+    if(status === 403 || status === 404 || /forbidden|not found|accessDenied|insufficientPermissions/i.test(msg)){
+      alert('No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.');
+    } else {
+      alert('Error al sincronizar con Google Drive: ' + msg);
+    }
   }finally{
     setDriveSyncButtonDisabled(false);
   }
