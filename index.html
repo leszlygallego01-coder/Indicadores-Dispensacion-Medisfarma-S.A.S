@@ -28,11 +28,14 @@ const firebaseConfig = {
 let dbFirestore = null;
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
-    firebase.initializeApp(firebaseConfig);
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
     dbFirestore = firebase.firestore();
+    // Asignar instancias globales para el resto del código
+       window.dbFirestore = dbFirestore;
+       window.db = dbFirestore;
     console.log('[Init] Firebase Firestore inicializado correctamente.');
-  } else {
-    console.warn('[Init] Firebase SDK no disponible — se usará almacenamiento local.');
   }
 } catch (e) {
   console.error('[Init] Error al inicializar Firebase:', e);
