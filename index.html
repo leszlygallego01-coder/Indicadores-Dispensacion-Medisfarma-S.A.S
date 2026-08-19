@@ -768,14 +768,120 @@ const COLLECTION = 'datasets';
 let dbFailed = false;
 const memoryStore = new Map(); // respaldo local: key -> record (solo dura la sesión)
 
+/* --- Clave que se guarda EXCLUSIVAMENTE en almacenamiento local (sin Firebase) --- */
+const LOCAL_ONLY_KEYS = new Set(['reporte']);
+
+/* --- IndexedDB local del navegador (para datos grandes que no caben en localStorage ~5MB) --- */
+const IDB_LOCAL_NAME = 'medisfarma_local';
+const IDB_LOCAL_VER = 1;
+const IDB_LOCAL_STORE = 'datasets';
+let _idbLocalDB = null; // instancia abierta de IDBDatabase
+
+function idbLocalOpen() {
+  if (_idbLocalDB) return Promise.resolve(_idbLocalDB);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_LOCAL_NAME, IDB_LOCAL_VER);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_LOCAL_STORE)) {
+        db.createObjectStore(IDB_LOCAL_STORE, { keyPath: 'key' });
+      }
+    };
+    req.onsuccess = (e) => { _idbLocalDB = e.target.result; resolve(_idbLocalDB); };
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error abriendo:', e.target.error); reject(e.target.error); };
+  });
+}
+
+async function idbLocalPut(record) {
+  const db = await idbLocalOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_LOCAL_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_LOCAL_STORE);
+    // Almacenar solo los campos necesarios, sin meter todo el string enorme en un campo
+    const storable = { key: record.key, rows: record.rows, fileName: record.fileName || '', updatedAt: record.updatedAt || '', batches: record.batches || null };
+    const req = store.put(storable);
+    req.onsuccess = () => { console.log('[IndexedDB Local] Guardado "' + record.key + '":', record.rows.length, 'filas'); resolve(true); };
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error guardando "' + record.key + '":', e.target.error); reject(e.target.error); };
+  });
+}
+
+async function idbLocalGet(key) {
+  const db = await idbLocalOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_LOCAL_STORE, 'readonly');
+    const store = tx.objectStore(IDB_LOCAL_STORE);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error leyendo "' + key + '":', e.target.error); reject(e.target.error); };
+  });
+}
+
+async function idbLocalGetAll() {
+  const db = await idbLocalOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_LOCAL_STORE, 'readonly');
+    const store = tx.objectStore(IDB_LOCAL_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error leyendo todos:', e.target.error); reject(e.target.error); };
+  });
+}
+
+async function idbLocalDelete(key) {
+  const db = await idbLocalOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_LOCAL_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_LOCAL_STORE);
+    const req = store.delete(key);
+    req.onsuccess = () => { console.log('[IndexedDB Local] Eliminado "' + key + '"'); resolve(true); };
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error eliminando "' + key + '":', e.target.error); reject(e.target.error); };
+  });
+}
+
+async function idbLocalClear() {
+  const db = await idbLocalOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_LOCAL_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_LOCAL_STORE);
+    const req = store.clear();
+    req.onsuccess = () => { console.log('[IndexedDB Local] Almacén limpiado'); resolve(true); };
+    req.onerror = (e) => { console.error('[IndexedDB Local] Error limpiando:', e.target.error); reject(e.target.error); };
+  });
+}
+
 /* --- Persistencia localStorage (fallback robusto cuando Firebase no está) --- */
 const LS_PREFIX = 'medisfarma_data_';
 function lsPut(key, record) {
+  // 'reporte' se guarda en IndexedDB local, no en localStorage (supera ~5MB)
+  if (LOCAL_ONLY_KEYS.has(key)) {
+    console.log('[localStorage] Saltando "' + key + '" — se guarda en IndexedDB local');
+    return false;
+  }
   try {
     const serialized = JSON.stringify({ rows: record.rows, fileName: record.fileName, updatedAt: record.updatedAt, batches: record.batches || null });
     localStorage.setItem(LS_PREFIX + key, serialized);
+    return true; // éxito
   } catch (e) {
-    console.warn('[localStorage] Error guardando:', e);
+    console.warn('[localStorage] Error guardando "' + key + '":', e.message || e);
+    // Intentar liberar espacio eliminando claves huérfanas de sesiones previas
+    try {
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_PREFIX) && k !== LS_PREFIX + key) toRemove.push(k);
+      }
+      if (toRemove.length) {
+        console.warn('[localStorage] Intentando liberar espacio eliminando', toRemove.length, 'claves previas…');
+        toRemove.forEach(k => localStorage.removeItem(k));
+        // Reintentar una vez
+        localStorage.setItem(LS_PREFIX + key, serialized);
+        console.warn('[localStorage] Reintento exitoso para "' + key + '"');
+        return true;
+      }
+    } catch (e2) {
+      console.warn('[localStorage] Reintento también falló para "' + key + '":', e2.message || e2);
+    }
+    return false; // fallo
   }
 }
 function lsGet(key) {
@@ -919,6 +1025,21 @@ async function fetchRecordFromMeta(metaDoc){
 /* --- Operaciones CRUD --- */
 
 async function idbPut(record) {
+  // ── Claves exclusivamente locales (sin Firebase) ──
+  if (LOCAL_ONLY_KEYS.has(record.key)) {
+    // Guardar en IndexedDB local del navegador (sin límite de ~5MB)
+    try {
+      await idbLocalPut(record);
+      console.log('[idbPut] "' + record.key + '" guardado en IndexedDB local:', record.rows.length, 'filas');
+    } catch (idbErr) {
+      console.error('[idbPut] IndexedDB local falló para "' + record.key + '", usando memoryStore:', idbErr);
+    }
+    // Siempre en memoryStore también (acceso inmediato sin esperar IDB)
+    memoryStore.set(record.key, record);
+    return; // NO escribir en Firestore ni activar _localWriteActive para Firebase
+  }
+
+  // ── Claves normales (van a Firestore + localStorage) ──
   // Siempre guardar en localStorage como respaldo persistente
   lsPut(record.key, record);
   _localWriteActive = true;
@@ -957,20 +1078,61 @@ async function idbPut(record) {
   }
 }
 async function idbGetAll() {
+  // ── Recolectar registros de claves locales (reporte, etc.) desde IndexedDB local + memoryStore ──
+  const localRecords = [];
+  for (const localKey of LOCAL_ONLY_KEYS) {
+    // memoryStore tiene prioridad (datos más frescos)
+    const memRec = memoryStore.get(localKey);
+    if (memRec) {
+      localRecords.push(memRec);
+    } else {
+      try {
+        const idbRec = await idbLocalGet(localKey);
+        if (idbRec) localRecords.push(idbRec);
+      } catch(e) { console.warn('[idbGetAll] Error leyendo "' + localKey + '" de IndexedDB local:', e); }
+    }
+  }
+
+  // ── Recolectar registros de claves normales desde Firestore (o fallback) ──
+  let firestoreRecords = [];
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const snap = await dbFirestore.collection(COLLECTION).get();
-    const records = await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d)));
-    return records.filter(Boolean);
+    // Excluir claves locales — no deben venir de Firestore
+    firestoreRecords = (await Promise.all(snap.docs.map(d => fetchRecordFromMeta(d))))
+      .filter(Boolean)
+      .filter(r => !LOCAL_ONLY_KEYS.has(r.key));
   } catch (err) {
     activarModoMemoria(err);
-    // Intentar localStorage primero, luego memoryStore
+    // Fallback: combinar localStorage y memoryStore (solo claves NO locales)
+    const byKey = new Map();
     const lsRecords = lsGetAll();
-    if (lsRecords.length > 0) return lsRecords;
-    return Array.from(memoryStore.values());
+    lsRecords.filter(r => !LOCAL_ONLY_KEYS.has(r.key)).forEach(r => byKey.set(r.key, r));
+    memoryStore.forEach((r, k) => { if(!LOCAL_ONLY_KEYS.has(k)) byKey.set(k, r); });
+    firestoreRecords = Array.from(byKey.values());
   }
+
+  return [...firestoreRecords, ...localRecords];
 }
 async function idbGet(key) {
+  // ── Clave exclusivamente local ──
+  if (LOCAL_ONLY_KEYS.has(key)) {
+    // memoryStore tiene prioridad (datos más frescos)
+    const memRec = memoryStore.get(key);
+    if (memRec) return memRec;
+    // Fallback a IndexedDB local del navegador
+    try {
+      const idbRec = await idbLocalGet(key);
+      if (idbRec) {
+        // Reponer en memoryStore para acceso rápido
+        memoryStore.set(key, idbRec);
+        return idbRec;
+      }
+    } catch(e) { console.warn('[idbGet] Error leyendo "' + key + '" de IndexedDB local:', e); }
+    return null;
+  }
+
+  // ── Clave normal (viene de Firestore o fallback) ──
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
     const doc = await dbFirestore.collection(COLLECTION).doc(key).get();
@@ -978,13 +1140,22 @@ async function idbGet(key) {
     return await fetchRecordFromMeta(doc);
   } catch (err) {
     activarModoMemoria(err);
-    // Intentar localStorage primero, luego memoryStore
-    const lsRec = lsGet(key);
-    if (lsRec) return lsRec;
-    return memoryStore.get(key) || null;
+    // memoryStore tiene prioridad (datos más frescos, o que no cupieron en localStorage)
+    const memRec = memoryStore.get(key);
+    if (memRec) return memRec;
+    // Fallback a localStorage
+    return lsGet(key) || null;
   }
 }
 async function idbDelete(key) {
+  // ── Clave exclusivamente local ──
+  if (LOCAL_ONLY_KEYS.has(key)) {
+    memoryStore.delete(key);
+    try { await idbLocalDelete(key); } catch(e) { console.warn('[idbDelete] Error eliminando "' + key + '" de IndexedDB local:', e); }
+    return; // No tocar Firestore ni _localWriteActive
+  }
+
+  // ── Clave normal ──
   // Siempre eliminar de localStorage también
   lsDelete(key);
   _localWriteActive = true;
@@ -1003,6 +1174,11 @@ async function idbDelete(key) {
   }
 }
 async function idbClearAll() {
+  // Limpiar IndexedDB local (claves locales como reporte)
+  try { await idbLocalClear(); } catch(e) { console.warn('[idbClearAll] Error limpiando IndexedDB local:', e); }
+  // Limpiar memoryStore de claves locales
+  LOCAL_ONLY_KEYS.forEach(k => memoryStore.delete(k));
+
   // Siempre limpiar localStorage también
   lsClear();
   _localWriteActive = true;
@@ -1011,6 +1187,9 @@ async function idbClearAll() {
     const snap = await dbFirestore.collection(COLLECTION).get();
     const writes = [];
     for (const d of snap.docs) {
+      // No eliminar documentos de claves locales de Firestore (no deberían existir, pero por seguridad)
+      const data = d.data();
+      if (LOCAL_ONLY_KEYS.has(data.key || d.id)) continue;
       const chunksSnap = await d.ref.collection('chunks').get();
       chunksSnap.docs.forEach(cd => writes.push({ ref: cd.ref, type:'delete' }));
       writes.push({ ref: d.ref, type:'delete' });
@@ -1039,8 +1218,9 @@ function startFirestoreListener(){
     _snapshotDebounce = setTimeout(async () => {
       // 1) Actualizar de inmediato los metadatos livianos (conteo de filas,
       //    nombre de archivo, lotes) SIN descargar los fragmentos completos.
+      //    Excluir claves locales (reporte) — no se gestionan vía Firestore.
       state.loaded = {};
-      snap.docs.forEach(d => {
+      snap.docs.filter(d => { const k = (d.data().key || d.id); return !LOCAL_ONLY_KEYS.has(k); }).forEach(d => {
         const data = d.data();
         state.loaded[data.key || d.id] = {
           rowCount: data.rowCount !== undefined ? data.rowCount : (Array.isArray(data.rows) ? data.rows.length : 0),
@@ -1049,13 +1229,33 @@ function startFirestoreListener(){
           batches: data.batches || null
         };
       });
+      // Añadir metadatos de claves locales (reporte) desde IndexedDB local / memoryStore
+      for (const localKey of LOCAL_ONLY_KEYS) {
+        const memRec = memoryStore.get(localKey);
+        if (memRec) {
+          state.loaded[localKey] = { rowCount: memRec.rows.length, fileName: memRec.fileName, updatedAt: memRec.updatedAt, batches: memRec.batches || null };
+        } else {
+          try {
+            const idbRec = await idbLocalGet(localKey);
+            if (idbRec) {
+              state.loaded[localKey] = { rowCount: idbRec.rows.length, fileName: idbRec.fileName, updatedAt: idbRec.updatedAt, batches: idbRec.batches || null };
+              // Reponer en memoryStore
+              memoryStore.set(localKey, idbRec);
+            }
+          } catch(e) { console.warn('[onSnapshot] Error leyendo "' + localKey + '" de IndexedDB local:', e); }
+        }
+      }
       renderUploadCards();
       updateTopStatus();
       updateCalcButton();
       // 2) Sincronizar a localStorage sólo los documentos que realmente
       //    cambiaron, descargando sus fragmentos completos únicamente
-      //    cuando hace falta.
-      const changed = snap.docChanges().filter(c => c.type==='added' || c.type==='modified');
+      //    cuando hace falta. Ignorar claves locales.
+      const changed = snap.docChanges().filter(c => {
+        if (c.type !== 'added' && c.type !== 'modified') return false;
+        const k = (c.doc.data().key || c.doc.id);
+        return !LOCAL_ONLY_KEYS.has(k); // excluir reporte
+      });
       for(const change of changed){
         try {
           const rec = await fetchRecordFromMeta(change.doc);
