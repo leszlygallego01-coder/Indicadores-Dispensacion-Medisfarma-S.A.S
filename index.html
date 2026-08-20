@@ -169,6 +169,22 @@ nav.tabs button .count{
 .filters input,.filters select{font-family:var(--body);font-size:13px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:150px;}
 .filters .field.grow{flex:1;min-width:180px;}
 
+/* selector con selección múltiple (checkboxes) */
+.ms{position:relative;min-width:200px;}
+.ms-toggle{font-family:var(--body);font-size:13px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:100%;min-width:180px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ms-toggle::after{content:"\25BE";float:right;color:var(--ink-soft);margin-left:6px;}
+.ms-panel{display:none;position:absolute;z-index:40;top:calc(100% + 4px);left:0;width:330px;max-width:80vw;background:var(--white);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(6,60,107,0.14);padding:8px;}
+.ms.open .ms-panel{display:block;}
+.ms-search{width:100%;font-size:12.5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;min-width:0;}
+.ms-actions{display:flex;gap:6px;margin-bottom:6px;}
+.ms-actions button{flex:1;font-family:var(--body);font-size:11px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink-soft);cursor:pointer;}
+.ms-actions button:hover{color:var(--blue-deep);}
+.ms-list{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:2px;}
+.ms-list label{display:flex;align-items:center;gap:7px;font-size:12px;text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink);padding:3px 4px;border-radius:4px;cursor:pointer;}
+.ms-list label:hover{background:var(--blue-soft);}
+.ms-list input[type=checkbox]{min-width:0;width:auto;padding:0;}
+.ms-empty{font-size:11.5px;color:var(--ink-soft);padding:6px 4px;}
+
 .subfilters{display:flex;flex-wrap:wrap;gap:12px;align-items:end;background:var(--blue-soft);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;margin-bottom:20px;}
 .subfilters .field{display:flex;flex-direction:column;gap:4px;}
 .subfilters label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--blue-deep);font-weight:700;}
@@ -363,7 +379,19 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <div class="field"><label>Modalidad</label><select id="fContrato"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS / Sigla Comercial</label><select id="fEps"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS Consolidada</label><select id="fEpsGrupo"><option value="">Todas</option></select></div>
-      <div class="field grow"><label>Diagnóstico</label><select id="fCie10"><option value="">Todos</option></select></div>
+      <div class="field grow"><label>Diagnóstico</label>
+        <div class="ms" id="fCie10Wrap">
+          <button type="button" class="ms-toggle" id="fCie10Toggle">Todos</button>
+          <div class="ms-panel">
+            <input type="text" class="ms-search" id="fCie10Search" placeholder="Buscar diagnóstico...">
+            <div class="ms-actions">
+              <button type="button" id="fCie10All">Seleccionar visibles</button>
+              <button type="button" id="fCie10None">Quitar selección</button>
+            </div>
+            <div class="ms-list" id="fCie10List"></div>
+          </div>
+        </div>
+      </div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
       <div class="field" style="margin-left:auto;"><label>&nbsp;</label><button class="btn btn-export" id="btnExportar">⬇ Exportar a Excel</button></div>
@@ -448,6 +476,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <select id="pieBodegaSelect"></select>
             <svg id="pieDispensa" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="pieLegend"></div>
+            <button class="btn btn-ghost" id="btnDescargarImagenDispensa" style="margin-top:12px;width:100%;padding:7px 10px;font-size:12px;">🖼 Descargar imagen del indicador</button>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
             <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las marcadas como INACTIVO se excluyen (ver pestaña <i>Dispensas Inactivas</i>). &nbsp;<b>Orden:</b> bodegas ordenadas por <b>Índice pendiente</b> de mayor a menor (las más críticas primero).</p>
@@ -2491,8 +2520,7 @@ function populateFilters(){
   document.getElementById('filtersBar').style.display='flex';
   document.getElementById('subfiltersBar').style.display='flex';
   const selC=document.getElementById('fContrato'); const selE=document.getElementById('fEps'); const selZ=document.getElementById('fZona'); const selEG=document.getElementById('fEpsGrupo');
-  const selCie=document.getElementById('fCie10');
-  selCie.innerHTML='<option value="">Todos</option>'+(p.cie10List||[]).map(c=>'<option value="'+escHtml(c)+'">'+escHtml(c)+'</option>').join('');
+  buildCie10Multi(p.cie10List||[]);
   selC.innerHTML='<option value="">Todos</option>'+p.contratos.map(c=>`<option value="${c}">${c}</option>`).join('');
   selE.innerHTML='<option value="">Todos</option>'+p.epsList.map(c=>`<option value="${c}">${c}</option>`).join('');
   selEG.innerHTML='<option value="">Todas</option>'+p.epsGrupos.map(c=>`<option value="${c}">${c}</option>`).join('');
@@ -2503,13 +2531,66 @@ function populateFilters(){
 document.getElementById('btnAplicarFiltro').addEventListener('click', aplicarFiltrosYRenderizar);
 // Se aplica automáticamente también al cambiar cualquiera de los campos (no solo con el botón),
 // para que volver a poner la fecha completa (o cualquier otro valor) siempre recalcule.
-['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo','fCie10'].forEach(id=>{
+['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo'].forEach(id=>{
   document.getElementById(id).addEventListener('change', aplicarFiltrosYRenderizar);
 });
+
+/* ---- Filtro Diagnóstico con selección múltiple (checkboxes) ---- */
+let cie10Seleccionados=new Set();
+function buildCie10Multi(list){
+  const cont=document.getElementById('fCie10List');
+  cie10Seleccionados=new Set();
+  cont.innerHTML = list.length
+    ? list.map((c,i)=>'<label><input type="checkbox" value="'+escHtml(c)+'"><span>'+escHtml(c)+'</span></label>').join('')
+    : '<div class="ms-empty">Sin diagnósticos disponibles.</div>';
+  cont.querySelectorAll('input[type=checkbox]').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      if(chk.checked) cie10Seleccionados.add(chk.value); else cie10Seleccionados.delete(chk.value);
+      actualizarEtiquetaCie10();
+      aplicarFiltrosYRenderizar();
+    });
+  });
+  actualizarEtiquetaCie10();
+}
+function actualizarEtiquetaCie10(){
+  const btn=document.getElementById('fCie10Toggle');
+  if(!btn) return;
+  const n=cie10Seleccionados.size;
+  if(n===0){ btn.textContent='Todos'; return; }
+  if(n===1){ btn.textContent=Array.from(cie10Seleccionados)[0]; return; }
+  btn.textContent=n+' diagnósticos seleccionados';
+}
+function limpiarCie10(){
+  cie10Seleccionados=new Set();
+  document.querySelectorAll('#fCie10List input[type=checkbox]').forEach(c=>{c.checked=false;});
+  actualizarEtiquetaCie10();
+}
+(function initCie10Multi(){
+  const wrap=document.getElementById('fCie10Wrap');
+  const toggle=document.getElementById('fCie10Toggle');
+  if(!wrap||!toggle) return;
+  toggle.addEventListener('click', e=>{ e.stopPropagation(); wrap.classList.toggle('open'); });
+  wrap.addEventListener('click', e=>e.stopPropagation());
+  document.addEventListener('click', ()=>wrap.classList.remove('open'));
+  document.getElementById('fCie10Search').addEventListener('input', function(){
+    const q=normValue(this.value);
+    document.querySelectorAll('#fCie10List label').forEach(l=>{
+      l.style.display = (!q || normValue(l.textContent).includes(q)) ? 'flex' : 'none';
+    });
+  });
+  document.getElementById('fCie10All').addEventListener('click', ()=>{
+    document.querySelectorAll('#fCie10List label').forEach(l=>{
+      if(l.style.display==='none') return;
+      const chk=l.querySelector('input'); chk.checked=true; cie10Seleccionados.add(chk.value);
+    });
+    actualizarEtiquetaCie10(); aplicarFiltrosYRenderizar();
+  });
+  document.getElementById('fCie10None').addEventListener('click', ()=>{ limpiarCie10(); aplicarFiltrosYRenderizar(); });
+})();
 document.getElementById('btnLimpiarFiltro').addEventListener('click', ()=>{
   document.getElementById('fFechaDesde').value = state.processed.minFecha ? dateToISO(state.processed.minFecha):'';
   document.getElementById('fFechaHasta').value = state.processed.maxFecha ? dateToISO(state.processed.maxFecha):'';
-  document.getElementById('fContrato').value=''; document.getElementById('fEps').value=''; document.getElementById('fEpsGrupo').value=''; document.getElementById('fCie10').value='';
+  document.getElementById('fContrato').value=''; document.getElementById('fEps').value=''; document.getElementById('fEpsGrupo').value=''; limpiarCie10();
   aplicarFiltrosYRenderizar();
 });
 document.getElementById('fBodegaSearch').addEventListener('input', renderAllTablesFromCache);
@@ -2533,7 +2614,7 @@ function aplicarFiltrosYRenderizar(){
   const contrato=document.getElementById('fContrato').value;
   const eps=document.getElementById('fEps').value;
   const epsGrupo=document.getElementById('fEpsGrupo').value;
-  const cie10=document.getElementById('fCie10').value;
+  const cie10Sel=cie10Seleccionados;
 
   filteredRowsCache = p.rows.filter(r=>{
     if(desde && r.fecha && r.fecha<desde) return false;
@@ -2541,7 +2622,7 @@ function aplicarFiltrosYRenderizar(){
     if(contrato && r.contrato!==contrato) return false;
     if(eps && r.eps!==eps) return false;
     if(epsGrupo && r.epsGrupo!==epsGrupo) return false;
-    if(cie10 && r.codigoCie10!==cie10) return false;
+    if(cie10Sel.size && !cie10Sel.has(r.codigoCie10)) return false;
     return true;
   });
 
@@ -3032,6 +3113,7 @@ function renderPieSelector(table){
   sel.onchange = ()=>drawPieForSelection(table);
   drawPieForSelection(table);
 }
+let lastPieDispensa=null;
 function drawPieForSelection(table){
   const sel=document.getElementById('pieBodegaSelect').value;
   let ef, pend, label;
@@ -3048,6 +3130,8 @@ function drawPieForSelection(table){
     {label:'Indicador de eficiencia', value:ef, color:'#1E8F5E'},
     {label:'Índice de pendiente', value:pend, color:'#D98A2B'}
   ], (ef*100).toFixed(1)+'%');
+  // Se guardan los valores en pantalla para poder exportar la imagen del indicador.
+  lastPieDispensa={ef:ef, pend:pend, label:label, row:(sel==='__ALL__'?null:table.find(t=>t.bodega===sel)), table:table, isAll:(sel==='__ALL__')};
   document.getElementById('pieLegend').innerHTML = `
     <div class="item"><span class="sw" style="background:#1E8F5E;"></span>Eficiencia<span class="val">${fmtPct(ef)}</span></div>
     <div class="item"><span class="sw" style="background:#D98A2B;"></span>Pendiente<span class="val">${fmtPct(pend)}</span></div>
@@ -3085,6 +3169,87 @@ function drawDonut(svgId, slices, centerText, centerColor){
   text.textContent=centerText;
   svg.appendChild(text);
 }
+
+// ---- Descargar imagen (PNG) del indicador de dispensa: dona + zona + bodega ----
+function descargarImagenIndicadorDispensa(){
+  if(!lastPieDispensa){ showToast('Primero calcula los indicadores.', true); return; }
+  const d=lastPieDispensa;
+  const zonaSel=document.getElementById('fZona').value || 'Todas las zonas';
+  const bodegaSel=d.isAll ? 'Todas las bodegas (general)' : d.label;
+  let disp=0, ent=0, pen=0;
+  if(d.isAll){
+    disp=sumField(d.table,'dispensas'); ent=sumField(d.table,'dispensasEntregadas'); pen=sumField(d.table,'dispensasPendientes');
+  }else if(d.row){
+    disp=d.row.dispensas; ent=d.row.dispensasEntregadas; pen=d.row.dispensasPendientes;
+  }
+  const W=760, H=430, scale=2;
+  const cv=document.createElement('canvas');
+  cv.width=W*scale; cv.height=H*scale;
+  const ctx=cv.getContext('2d');
+  ctx.scale(scale,scale);
+  // Fondo y marco
+  ctx.fillStyle='#FFFFFF'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#D8E2EC'; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,W-1,H-1);
+  ctx.fillStyle='#063C6B'; ctx.fillRect(0,0,W,6);
+  // Encabezado
+  ctx.fillStyle='#063C6B'; ctx.font='bold 20px Georgia, serif';
+  ctx.fillText('Indicador de dispensa', 28, 46);
+  ctx.fillStyle='#5C6C7E'; ctx.font='13px Arial, sans-serif';
+  ctx.fillText('Zona: '+zonaSel, 28, 70);
+  ctx.fillText('Bodega: '+bodegaSel, 28, 90);
+  const hoy=new Date();
+  ctx.fillText('Generado: '+hoy.toISOString().slice(0,10), 28, 110);
+  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(28,126); ctx.lineTo(W-28,126); ctx.stroke();
+  // Dona
+  const cx=170, cy=282, rOut=100, rIn=60;
+  const slices=[{v:d.ef,c:'#1E8F5E'},{v:d.pend,c:'#D98A2B'}];
+  const total=slices.reduce((a,b)=>a+(b.v||0),0) || 1;
+  let start=-Math.PI/2;
+  slices.forEach(s=>{
+    const ang=((s.v||0)/total)*Math.PI*2;
+    if(ang<=0) return;
+    ctx.beginPath();
+    ctx.arc(cx,cy,rOut,start,start+ang,false);
+    ctx.arc(cx,cy,rIn,start+ang,start,true);
+    ctx.closePath();
+    ctx.fillStyle=s.c; ctx.fill();
+    start+=ang;
+  });
+  ctx.fillStyle='#063C6B'; ctx.font='bold 26px Consolas, monospace'; ctx.textAlign='center';
+  ctx.fillText((d.ef*100).toFixed(1)+'%', cx, cy+9);
+  ctx.font='11px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
+  ctx.fillText('Eficiencia', cx, cy+26);
+  ctx.textAlign='left';
+  // Leyenda + cifras
+  const lx=320; let ly=180;
+  const linea=(color,texto,valor)=>{
+    if(color){ ctx.fillStyle=color; ctx.fillRect(lx,ly-11,12,12); }
+    ctx.fillStyle='#1B2733'; ctx.font='14px Arial, sans-serif';
+    ctx.fillText(texto, lx+(color?22:0), ly);
+    if(valor!==undefined){
+      ctx.font='bold 14px Consolas, monospace'; ctx.fillStyle='#063C6B';
+      ctx.textAlign='right'; ctx.fillText(valor, W-40, ly); ctx.textAlign='left';
+    }
+    ly+=30;
+  };
+  linea('#1E8F5E','Indicador de eficiencia', fmtPct(d.ef));
+  linea('#D98A2B','Índice de pendiente', fmtPct(d.pend));
+  ly+=6;
+  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(lx,ly-16); ctx.lineTo(W-40,ly-16); ctx.stroke();
+  linea(null,'Total dispensas', fmtInt(disp));
+  linea(null,'Dispensas entregadas', fmtInt(ent));
+  linea(null,'Dispensas pendientes', fmtInt(pen));
+  ctx.fillStyle='#9CA9B6'; ctx.font='11px Arial, sans-serif';
+  ctx.fillText('Solo dispensas con estado activo.', 28, H-20);
+  // Descargar
+  const a=document.createElement('a');
+  const slug=(bodegaSel+'_'+zonaSel).replace(/[^A-Za-z0-9\-_]+/g,'_').slice(0,60);
+  a.download='Indicador_Dispensa_'+slug+'_'+hoy.toISOString().slice(0,10)+'.png';
+  a.href=cv.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('Imagen del indicador de dispensa descargada.');
+}
+document.getElementById('btnDescargarImagenDispensa').addEventListener('click', descargarImagenIndicadorDispensa);
 
 // Selector genérico de gráfico de pastel: permite ver "General" (agregado de todas las
 // bodegas, recalculando las razones sobre las sumas) o una bodega puntual.
@@ -3478,7 +3643,7 @@ document.getElementById('btnDescargarParetoExistencias').addEventListener('click
   });
   const rowShape = r => ({
     'Zona':r.zona,'Bodega Detalle':r.bodegaDetalle,'Tipo':r.moleculaPareto,'Ubicación':r.sePuedeSubsanarPunto==='SI' ? 'Punto' : 'Bodega Principal','Documento':r.documento,
-    'Código Articulo':r.codigoArticulo,'Homólogo':r.homologo,'Diferencia (pendiente)':r.diferencia,
+    'Código Articulo':r.codigoArticulo,'Descripción DCI':r.descripcionDci,'Homólogo':r.homologo,'Diferencia (pendiente)':r.diferencia,
     'Existencia Disponible':r.sePuedeSubsanarPunto==='SI' ? r.existenciaPunto : r.existenciaBodega
   });
   const enElPunto = base.filter(r=>r.sePuedeSubsanarPunto==='SI' && r.existenciaPunto>0).map(rowShape);
