@@ -421,6 +421,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <button class="active" data-sub="dispensa">Indicador de dispensa</button>
         <button data-sub="linea">Indicador por línea (subsanar)</button>
         <button data-sub="soporte">Indicador soporte evento</button>
+        <button data-sub="inactivas">Dispensas Inactivas</button>
       </div>
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
@@ -483,6 +484,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                   <th rowspan="2">Zona</th><th rowspan="2">Bodega detalle</th>
                   <th colspan="3">Dispensas</th>
                   <th colspan="2">Indicadores</th>
+                  <th rowspan="2">Usuario Creación</th><th rowspan="2">Estado</th>
                 </tr>
                 <tr class="sub">
                   <th>Total</th><th>Entregadas</th><th>Pendientes</th>
@@ -501,6 +503,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <div style="margin-bottom:16px;">
           <button class="btn btn-export" id="btnDescargarParetoExistencias">Descargar Pareto y No pareto existencias</button>
           <button class="btn btn-export" id="btnDescargarCodigosComprar" style="background:var(--clay,#B23A34);box-shadow:0 2px 0 #7A2019;">⬇ Descargar Códigos a Comprar (Excel)</button>
+          <button class="btn btn-export" id="btnDescargarSinHomologar" style="background:var(--clay,#B23A34);box-shadow:0 2px 0 #7A2019;">⬇ Descargar Pendientes Sin Homologar (CSV)</button>
           <button class="btn btn-ghost" data-open-periodico="linea">📊 Reporte Comparativo Periódico</button>
         </div>
 
@@ -553,6 +556,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                 <th colspan="2">Cierre (agotados)</th>
                 <th colspan="6">Eficiencia Pareto (cantidad)</th>
                 <th colspan="6">Eficiencia No Pareto (cantidad)</th>
+                <th rowspan="2">Sin Homologar</th>
               </tr>
               <tr class="sub">
                 <th>Total</th><th>Entregadas</th><th>Pendientes</th>
@@ -611,6 +615,27 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           </div>
         </div>
       </div>
+      <!-- ---- SUBVISTA: DISPENSAS INACTIVAS ---- -->
+      <div class="subview" id="sub-inactivas">
+        <div class="stat-row" id="statsInactivas"></div>
+        <div class="chart-row" style="grid-template-columns:1fr 1fr;">
+          <div class="table-wrap">
+            <h4 style="margin:0 0 8px;font-size:13px;">Dispensas Inactivas por Usuario</h4>
+            <table class="data" id="tblInactivasUsuario">
+              <thead><tr><th>Usuario Creación</th><th>Dispensas Inactivas</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="table-wrap">
+            <h4 style="margin:0 0 8px;font-size:13px;">Dispensas Inactivas por Bodega</h4>
+            <table class="data" id="tblInactivasBodega">
+              <thead><tr><th>Zona</th><th>Bodega</th><th>Dispensas Inactivas</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
 
     </div>
   </div>
@@ -691,7 +716,7 @@ const DATASETS = [
   {
     key: 'reporte', tabla: 'Tabla_1', title: 'Reporte de Dispensación', required: true, accumulate: true,
     desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente.',
-    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte'],
+    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Usuario Creación','Estado'],
     fields: {
       documento: ['DOCUMENTO'],
       fechaDispensacion: ['FECHA DE DISPENSACION','FECHA DISPENSACION','FECHA DISPENSACIÓN'],
@@ -703,7 +728,9 @@ const DATASETS = [
       cantidadAutorizada: ['CANTIDAD AUTORIZADA'],
       diferencia: ['DIFERENCIA'],
       bodegaDetalle: ['BODEGA DETALLE'],
-      soportes: ['SOPORTE','SOPORTES']
+      soportes: ['SOPORTE','SOPORTES'],
+      usuarioCreacion: ['USUARIO CREACION','USUARIO CREACION','USUARIO CREACIÓN','USUARIO'],
+      estadoReporte: ['ESTADO']
     }
   },
   {
@@ -733,11 +760,12 @@ const DATASETS = [
   {
     key: 'inventario', tabla: 'Tabla_2', title: 'Inventario del Punto', required: true,
     desc: 'Existencias por artículo y bodega. El Homólogo se cruza automáticamente con la tabla Homólogo.',
-    cols: ['Codigo','Bodega Detalle','Unidades'],
+    cols: ['Codigo','Bodega Detalle','Unidades','Fecha de Vencimiento'],
     fields: {
       codigoArticulo: ['CODIGO'],
       bodegaDetalle: ['BODEGA DETALLE'],
-      unidades: ['UNIDADES']
+      unidades: ['UNIDADES'],
+      fechaVencimiento: ['FECHA DE VENCIMIENTO','FECHA VENCIMIENTO','FECHA VENC','VENCIMIENTO']
     }
   },
   {
@@ -1662,6 +1690,8 @@ async function calcularIndicadores(){
       const hom=codigoToHomologo.get(cod) || '';
       const bod=normValue(r.bodegaDetalle);
       const un=toNumber(r.unidades);
+      const fv=toDateSafe(r.fechaVencimiento);
+      if(fv){ const hoy=new Date(); const lim=new Date(hoy); lim.setMonth(lim.getMonth()+2); if(fv<lim) return; }
       if(!hom) return;
       const k=hom+'|'+bod;
       invPuntoMap.set(k, (invPuntoMap.get(k)||0)+un);
@@ -1693,6 +1723,8 @@ async function calcularIndicadores(){
       const sePuedeSubsanarBodega = Math.abs(diferencia) <= existenciaBodega ? 'SI':'NO';
       const soportes=toNumber(r.soportes);
       const tieneSoportes = soportes===0 ? 'NO TIENE SOPORTES':'TIENE SOPORTE';
+      const usuarioCreacion=String(r.usuarioCreacion||'').trim();
+      const estadoReporte=normValue(r.estadoReporte);
       const documento=String(r.documento||'').trim();
       const contrato=normValue(r.contrato);
       const eps=corregirEps(r.eps);
@@ -1702,7 +1734,7 @@ async function calcularIndicadores(){
         idx, documento, fecha, eps, epsGrupo, contrato, codigoArticulo, homologo, moleculaPareto, descripcionDci, estado,
         unidades, cantidadAutorizada, diferencia, lineaPendiente, bodegaDetalle, bodegaNorm,
         zona: bodegaToZona.get(bodegaNorm) || 'N/D',
-        existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes
+        existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes, usuarioCreacion, estadoReporte
       };
     });
 
@@ -1991,6 +2023,7 @@ function renderAllTablesFromCache(){
   renderIndicadorSoporteEvento(filteredRowsCache.filter(r=>r.contrato==='EVENTO'), bodegaSearch, zona);
   renderComparativos(filteredRowsCache);
   renderSeguimientoBodega(filteredRowsCache, bodegaSearch, zona);
+  renderIndicadorInactivas(filteredRowsCache, bodegaSearch, zona);
 }
 
 // ---- Comparativo ANTES (inicial) vs ACTUALIZADO (con Avances cargados) ----
@@ -2065,7 +2098,7 @@ function renderComparativos(rows){
 /* =========================================================================
    9. Utilidad de agrupación
    ========================================================================= */
-let lastTables={dispensa:[], linea:[], soporte:[]};
+let lastTables={dispensa:[], linea:[], soporte:[], inactivas:{usuario:[], bodega:[]}};
 
 function groupByBodega(rows, bodegaSearch, zona){
   const g=new Map();
@@ -2111,19 +2144,26 @@ function renderIndicadorDispensa(rowsAll, bodegaSearch, zona){
   const table = groups.map(g=>{
     const rs=g.rows;
     const dispSet=new Set(), dispEntSet=new Set(), dispPenSet=new Set();
+    const usuarioSet=new Set(), estadoSet=new Map();
     let lineas=0, lineasEnt=0, lineasPen=0;
     rs.forEach(r=>{
       dispSet.add(r.dispensaYPunto);
       if(r.pendienteDispensa==='NO') dispEntSet.add(r.dispensaYPunto); else dispPenSet.add(r.dispensaYPunto);
       lineas++; if(r.lineaPendiente==='NO') lineasEnt++; else lineasPen++;
+      if(r.usuarioCreacion) usuarioSet.add(r.usuarioCreacion);
+      if(r.estadoReporte){ const c=estadoSet.get(r.estadoReporte)||0; estadoSet.set(r.estadoReporte,c+1); }
     });
     const dispensas=dispSet.size, ent=dispEntSet.size, pen=dispPenSet.size;
+    const usuariosArr=Array.from(usuarioSet).sort();
+    const estadosArr=Array.from(estadoSet.entries()).sort((a,b)=>b[1]-a[1]).map(([k])=>k);
     return {
       zona:g.zona, bodega:g.bodega, dispensas, dispensasEntregadas:ent, dispensasPendientes:pen,
       lineas, lineasEntregadas:lineasEnt, lineasPendientes:lineasPen,
-      efDispensa: dispensas? ent/dispensas: null, pendDispensa: dispensas? 1-ent/dispensas: null
+      efDispensa: dispensas? ent/dispensas: null, pendDispensa: dispensas? 1-ent/dispensas: null,
+      usuarios: usuariosArr.join(', '), estados: estadosArr.join(', ')
     };
   });
+  table.sort((a,b)=>(b.pendDispensa||0)-(a.pendDispensa||0));
   lastTables.dispensa=table;
 
   const tbody=document.querySelector('#tblDispensa tbody');
@@ -2132,14 +2172,16 @@ function renderIndicadorDispensa(rowsAll, bodegaSearch, zona){
       <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
       <td>${fmtInt(t.dispensas)}</td><td>${fmtInt(t.dispensasEntregadas)}</td><td>${fmtInt(t.dispensasPendientes)}</td>
       <td class="${effClass(t.efDispensa)}">${fmtPct(t.efDispensa)}</td><td class="${pendClass(t.pendDispensa)}">${fmtPct(t.pendDispensa)}</td>
+      <td class="txt">${t.usuarios||'—'}</td><td class="txt">${t.estados||'—'}</td>
     </tr>`).join('');
-  if(!table.length) bodyHtml='<tr><td colspan="7" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
+  if(!table.length) bodyHtml='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
   else{
     // 1.10 fila de totales
     const tD=sumField(table,'dispensas'), tE=sumField(table,'dispensasEntregadas'), tP=sumField(table,'dispensasPendientes');
     bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
       <td>${fmtInt(tD)}</td><td>${fmtInt(tE)}</td><td>${fmtInt(tP)}</td>
-      <td class="${effClass(tD?tE/tD:null)}">${fmtPct(tD?tE/tD:null)}</td><td class="${pendClass(tD?1-tE/tD:null)}">${fmtPct(tD?1-tE/tD:null)}</td></tr>`;
+      <td class="${effClass(tD?tE/tD:null)}">${fmtPct(tD?tE/tD:null)}</td><td class="${pendClass(tD?1-tE/tD:null)}">${fmtPct(tD?1-tE/tD:null)}</td>
+      <td class="txt">—</td><td class="txt">—</td></tr>`;
   }
   tbody.innerHTML=bodyHtml;
 
@@ -2312,7 +2354,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
     const rs=g.rows;
     let lineas=0, lineasEnt=0, lineasPen=0;
     let molParetoPend=0, paretoAgotado=0, molNoParetoPend=0, noParetoAgotado=0;
-    let cantPuntoPareto=0, cantBodegaPareto=0, cantPuntoNoPareto=0, cantBodegaNoPareto=0;
+    let cantPuntoPareto=0, cantBodegaPareto=0, cantPuntoNoPareto=0, cantBodegaNoPareto=0, sinHomologar=0;
     rs.forEach(r=>{
       lineas++;
       if(r.lineaPendiente==='NO'){ lineasEnt++; return; }
@@ -2329,6 +2371,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
         if(r.existenciaPunto>0 && r.sePuedeSubsanarPunto==='SI') cantPuntoNoPareto++;
         else if(r.existenciaBodega>0 && r.sePuedeSubsanarPunto==='NO' && r.sePuedeSubsanarBodega==='SI') cantBodegaNoPareto++;
       }
+      if(r.homologo==='') sinHomologar++;
     });
     const totalAgotadas=paretoAgotado+noParetoAgotado;
     const pctCierre = lineasPen ? totalAgotadas/lineasPen : null;
@@ -2343,8 +2386,9 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
     return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen,
       molParetoPend, paretoAgotado, molNoParetoPend, noParetoAgotado, totalAgotadas, pctCierre,
       cantPuntoPareto, cantBodegaPareto, efPuntoPareto, efBodegaPareto, efFinalPareto, pctComprasPareto,
-      cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto };
+      cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto, sinHomologar };
   });
+  table.sort((a,b)=>(b.efFinalPareto||0)-(a.efFinalPareto||0));
   lastTables.linea=table;
 
   const tbody=document.querySelector('#tblLinea tbody');
@@ -2356,9 +2400,9 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
       <td>${fmtInt(t.molNoParetoPend)}</td><td>${fmtInt(t.noParetoAgotado)}</td>
       <td>${fmtInt(t.totalAgotadas)}</td><td class="${pctClass(1-(t.pctCierre||0))}">${fmtPct(t.pctCierre)}</td>
       <td>${fmtInt(t.cantPuntoPareto)}</td><td class="${effClass(t.efPuntoPareto)}">${fmtPct(t.efPuntoPareto)}</td><td>${fmtInt(t.cantBodegaPareto)}</td><td class="${effClass(t.efBodegaPareto)}">${fmtPct(t.efBodegaPareto)}</td><td class="${effClass(t.efFinalPareto)}">${fmtPct(t.efFinalPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasPareto)}</td>
-      <td>${fmtInt(t.cantPuntoNoPareto)}</td><td class="${effClass(t.efPuntoNoPareto)}">${fmtPct(t.efPuntoNoPareto)}</td><td>${fmtInt(t.cantBodegaNoPareto)}</td><td class="${effClass(t.efBodegaNoPareto)}">${fmtPct(t.efBodegaNoPareto)}</td><td class="${effClass(t.efFinalNoPareto)}">${fmtPct(t.efFinalNoPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasNoPareto)}</td>
+      <td>${fmtInt(t.cantPuntoNoPareto)}</td><td class="${effClass(t.efPuntoNoPareto)}">${fmtPct(t.efPuntoNoPareto)}</td><td>${fmtInt(t.cantBodegaNoPareto)}</td><td class="${effClass(t.efBodegaNoPareto)}">${fmtPct(t.efBodegaNoPareto)}</td><td class="${effClass(t.efFinalNoPareto)}">${fmtPct(t.efFinalNoPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasNoPareto)}</td><td>${fmtInt(t.sinHomologar)}</td>
     </tr>`).join('');
-  if(!table.length) bodyHtml='<tr><td colspan="23" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
+  if(!table.length) bodyHtml='<tr><td colspan="25" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
   else{
     const s=(f)=>sumField(table,f);
     const tLineas=s('lineas'), tEnt=s('lineasEnt'), tPen=s('lineasPen');
@@ -2372,7 +2416,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
       <td>${fmtInt(tMolP)}</td><td>${fmtInt(tParAg)}</td><td>${fmtInt(tMolNP)}</td><td>${fmtInt(tNoParAg)}</td>
       <td>${fmtInt(tAgot)}</td><td>${fmtPct(tPen?tAgot/tPen:null)}</td>
       <td>${fmtInt(tCP)}</td><td class="${effClass(tEfPP)}">${fmtPct(tEfPP)}</td><td>${fmtInt(tCBP)}</td><td class="${effClass(tEfBP)}">${fmtPct(tEfBP)}</td><td class="${effClass(tEfFP)}">${fmtPct(tEfFP)}</td><td class="pct-bad">${fmtPct(tComprasP)}</td>
-      <td>${fmtInt(tCNP)}</td><td class="${effClass(tEfPNP)}">${fmtPct(tEfPNP)}</td><td>${fmtInt(tCBNP)}</td><td class="${effClass(tEfBNP)}">${fmtPct(tEfBNP)}</td><td class="${effClass(tEfFNP)}">${fmtPct(tEfFNP)}</td><td class="pct-bad">${fmtPct(tComprasNP)}</td></tr>`;
+      <td>${fmtInt(tCNP)}</td><td class="${effClass(tEfPNP)}">${fmtPct(tEfPNP)}</td><td>${fmtInt(tCBNP)}</td><td class="${effClass(tEfBNP)}">${fmtPct(tEfBNP)}</td><td class="${effClass(tEfFNP)}">${fmtPct(tEfFNP)}</td><td class="pct-bad">${fmtPct(tComprasNP)}</td><td>${fmtInt(sumField(table,'sinHomologar'))}</td></tr>`;
   }
   tbody.innerHTML=bodyHtml;
 
@@ -2462,6 +2506,7 @@ function renderIndicadorSoporteEvento(rowsEvento, bodegaSearch, zona){
     return { zona:g.zona, bodega:g.bodega, ent, entCon, entSin,
       efEnt: ent? entCon/ent: null };
   });
+  table.sort((a,b)=>(a.efEnt||0)-(b.efEnt||0));
   lastTables.soporte=table;
 
   const tbody=document.querySelector('#tblSoporte tbody');
@@ -2499,6 +2544,69 @@ function renderIndicadorSoporteEvento(rowsEvento, bodegaSearch, zona){
 }
 
 /* =========================================================================
+/* =========================================================================
+   12b. Indicador Dispensas Inactivas
+   ========================================================================= */
+function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
+  const inactivas = rowsAll.filter(r=> r.estadoReporte && r.estadoReporte.includes('INACTIVA'));
+  
+  // ---- Tabla por Usuario (mayor a menor) ----
+  const usuarioMap = new Map();
+  inactivas.forEach(r=>{
+    const dyp = r.dispensaYPunto;
+    const usuario = r.usuarioCreacion || 'Sin usuario';
+    if(!usuarioMap.has(usuario)) usuarioMap.set(usuario, new Set());
+    usuarioMap.get(usuario).add(dyp);
+  });
+  const tableUsuario = Array.from(usuarioMap.entries()).map(([usuario, dypSet])=>({
+    usuario, inactivas: dypSet.size
+  })).sort((a,b)=> b.inactivas - a.inactivas);
+  lastTables.inactivas.usuario = tableUsuario;
+
+  const tbodyU = document.querySelector('#tblInactivasUsuario tbody');
+  let bodyU = tableUsuario.map(t=>`<tr><td class="txt">${t.usuario}</td><td>${fmtInt(t.inactivas)}</td></tr>`).join('');
+  if(!tableUsuario.length) bodyU='<tr><td colspan="2" class="txt" style="text-align:center;color:#9CA9B6;">Sin dispensas inactivas.</td></tr>';
+  else{
+    const totalU = sumField(tableUsuario,'inactivas');
+    bodyU += `<tr class="total-row"><td class="txt">TOTAL (${tableUsuario.length} usuarios)</td><td>${fmtInt(totalU)}</td></tr>`;
+  }
+  tbodyU.innerHTML = bodyU;
+
+  // ---- Tabla por Bodega (mayor a menor) ----
+  const bodegaMap = new Map();
+  inactivas.forEach(r=>{
+    const dyp = r.dispensaYPunto;
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return;
+    if(zona && r.zona!==zona) return;
+    if(!bodegaMap.has(r.bodegaDetalle)) bodegaMap.set(r.bodegaDetalle, {zona:r.zona, bodega:r.bodegaDetalle, dypSet:new Set()});
+    bodegaMap.get(r.bodegaDetalle).dypSet.add(dyp);
+  });
+  const tableBodega = Array.from(bodegaMap.values()).map(g=>({
+    zona:g.zona, bodega:g.bodega, inactivas:g.dypSet.size
+  })).sort((a,b)=> b.inactivas - a.inactivas);
+  lastTables.inactivas.bodega = tableBodega;
+
+  const tbodyB = document.querySelector('#tblInactivasBodega tbody');
+  let bodyB = tableBodega.map(t=>`<tr><td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td><td>${fmtInt(t.inactivas)}</td></tr>`).join('');
+  if(!tableBodega.length) bodyB='<tr><td colspan="3" class="txt" style="text-align:center;color:#9CA9B6;">Sin dispensas inactivas para el filtro seleccionado.</td></tr>';
+  else{
+    const totalB = sumField(tableBodega,'inactivas');
+    bodyB += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${tableBodega.length} bodegas)</td><td>${fmtInt(totalB)}</td></tr>`;
+  }
+  tbodyB.innerHTML = bodyB;
+
+  // Stats
+  const totalInactivas = new Set(inactivas.map(r=>r.dispensaYPunto)).size;
+  const totalDispensas = new Set(rowsAll.map(r=>r.dispensaYPunto)).size;
+  const pctInactivas = totalDispensas ? totalInactivas/totalDispensas : null;
+  document.getElementById('statsInactivas').innerHTML = `
+    <div class="stat warn"><div class="label">Dispensas Inactivas</div><div class="value">${fmtInt(totalInactivas)}</div><div class="sub">${fmtPct(pctInactivas)} del total</div></div>
+    <div class="stat"><div class="label">Total dispensas</div><div class="value">${fmtInt(totalDispensas)}</div></div>
+    <div class="stat"><div class="label">Usuarios con inactivas</div><div class="value">${fmtInt(tableUsuario.length)}</div></div>
+    <div class="stat"><div class="label">Bodegas con inactivas</div><div class="value">${fmtInt(tableBodega.length)}</div></div>
+  `;
+}
+
    13. Google Drive — respaldo en la nube (independiente de Firebase)
    Ambas integraciones conviven: Firebase Firestore sigue siendo la fuente
    de verdad para los datos cargados/calculados; Google Drive se usa además
@@ -3004,6 +3112,47 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   exportWorkbook(wb, `Codigos_a_Comprar_${fecha}.xlsx`);
   showToast('Excel de Códigos a Comprar exportado: '+fmtInt(aComprar.length)+' líneas.');
 });
+// ---- Descargar Pendientes Sin Homologar (CSV) ----
+document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()=>{
+  if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
+  const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
+  const zona = document.getElementById('fZona').value;
+  const sinHom = filteredRowsCache.filter(r=>{
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
+    if(zona && r.zona!==zona) return false;
+    return r.lineaPendiente==='SI' && r.homologo==='';
+  }).map(r=>({
+    'Bodega Detalle': r.bodegaDetalle,
+    'Zona': r.zona,
+    'Documento': r.documento,
+    'Codigo Articulo': r.codigoArticulo,
+    'Descripcion': r.descripcionDci || '',
+    'Diferencia': r.diferencia,
+    'Estado Molecula': r.estado
+  }));
+  if(!sinHom.length){ showToast('No hay pendientes sin homologar en el filtro actual.', true); return; }
+  const headers = Object.keys(sinHom[0]);
+  const csvRows = [headers.join(';')];
+  sinHom.forEach(r=>{
+    csvRows.push(headers.map(h=>{
+      const v = String(r[h]).replace(/"/g, '""');
+      return (v.includes(';')||v.includes('"')) ? '"'+v+'"' : v;
+    }).join(';'));
+  });
+  const csvStr = '\uFEFF' + csvRows.join('\r\n');
+  const blob = new Blob([csvStr], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const fecha = new Date().toISOString().slice(0,10);
+  a.download = 'Pendientes_Sin_Homologar_' + fecha + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('CSV exportado: ' + fmtInt(sinHom.length) + ' pendientes sin homologar.');
+});
+
 
 /* =========================================================================
    14. Navegación
