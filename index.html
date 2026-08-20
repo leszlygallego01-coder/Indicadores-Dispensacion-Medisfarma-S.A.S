@@ -363,6 +363,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <div class="field"><label>Modalidad</label><select id="fContrato"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS / Sigla Comercial</label><select id="fEps"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS Consolidada</label><select id="fEpsGrupo"><option value="">Todas</option></select></div>
+      <div class="field grow"><label>Codigo CIE 10</label><select id="fCie10"><option value="">Todos</option></select></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
       <div class="field" style="margin-left:auto;"><label>&nbsp;</label><button class="btn btn-export" id="btnExportar">⬇ Exportar a Excel</button></div>
@@ -597,12 +598,16 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="seguimiento-section">
           <h3>👤 Dispensas inactivas por Usuario Creación</h3>
-          <p class="seg-desc">Cruce de <b>Usuario Creación</b>, <b>Estado</b> (solo INACTIVO) y <b>Fecha de Dispensación</b>: cada fila es un usuario en una fecha concreta. Ordenado de mayor a menor cantidad de dispensas inactivas.</p>
+          <p class="seg-desc">Cruce de <b>Usuario Creación</b> y <b>Estado</b> (solo INACTIVO): cada fila es un usuario con su total de dispensas inactivas. Usa el selector para ver un usuario en particular. Ordenado de mayor a menor cantidad.</p>
+          <div class="field" style="max-width:340px;margin-bottom:10px;">
+            <label>Usuario Creación</label>
+            <select id="fInactivasUsuario"><option value="">Todos los usuarios</option></select>
+          </div>
           <div class="table-wrap" style="max-height:460px;">
             <table class="data" id="tblInactivasUsuario">
               <thead>
                 <tr>
-                  <th>Usuario Creación</th><th>Dispensas inactivas</th><th>% del total</th><th>Fecha</th>
+                  <th>Usuario Creación</th><th>Dispensas inactivas</th><th>% del total</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -611,8 +616,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
 
         <div class="seguimiento-section">
-          <h3>🏥 Dispensas inactivas por Bodega Detalle</h3>
-          <p class="seg-desc">Cantidad de dispensas inactivas por bodega, ordenada de mayor a menor.</p>
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🏥 Dispensas inactivas por Bodega Detalle</h3>
+              <p class="seg-desc">Cantidad de dispensas inactivas por bodega, ordenada de mayor a menor.</p>
+            </div>
+            <button class="btn btn-export" id="btnDescargarInactivasBodega" style="margin-left:auto;align-self:center;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar por bodega (Excel)</button>
+          </div>
           <div class="table-wrap" style="max-height:460px;">
             <table class="data" id="tblInactivasBodega">
               <thead>
@@ -705,9 +715,10 @@ const DATASETS = [
   {
     key: 'reporte', tabla: 'Tabla_1', title: 'Reporte de Dispensación', required: true, accumulate: true,
     desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente. Esta tarjeta ya NO acepta cargue manual: sus datos provienen exclusivamente de la carpeta de Google Drive.',
-    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Estado','Usuario Creación'],
+    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Estado','Usuario Creación','Codigo CIE 10'],
     fields: {
       documento: ['DOCUMENTO'],
+      codigoCie10: ['CODIGO CIE 10','CODIGO CIE10','CODIGO CIE-10','CÓDIGO CIE 10','CÓDIGO CIE10','CIE 10','CIE10','CIE-10','CODIGO DIAGNOSTICO','CODIGO DE DIAGNOSTICO','DIAGNOSTICO'],
       estadoDispensa: ['ESTADO','ESTADO DISPENSA','ESTADO DE LA DISPENSA','ESTADO DE DISPENSA'],
       usuarioCreacion: ['USUARIO CREACION','USUARIO CREACIÓN','USUARIO DE CREACION','USUARIO DE CREACIÓN','USUARIO CREADOR','USUARIO'],
       fechaDispensacion: ['FECHA DE DISPENSACION','FECHA DISPENSACION','FECHA DISPENSACIÓN'],
@@ -1131,6 +1142,7 @@ function showToast(msg,isError){
 // se busca cualquier encabezado que CONTENGA estas palabras. Evita que un cambio de
 // nombre en el archivo original (p. ej. "Estado dispensa 2024") deje el campo vacío.
 const FIELD_FALLBACK_KEYWORDS = {
+  codigoCie10: ['CIE 10','CIE10','CIE-10','CIE','DIAGNOSTIC'],
   estadoDispensa: ['ESTADO'],
   usuarioCreacion: ['USUARIO'],
   bodegaDetalle: ['BODEGA'],
@@ -2372,9 +2384,10 @@ async function calcularIndicadores(){
       const fecha=toDateSafe(r.fechaDispensacion);
       const estadoDispensa=normValue(r.estadoDispensa);
       const usuarioCreacion=String(r.usuarioCreacion||'').trim();
+      const codigoCie10=String(r.codigoCie10||'').trim().toUpperCase() || 'SIN CIE 10';
       return {
         idx, documento, fecha, eps, epsGrupo, contrato, codigoArticulo, homologo, moleculaPareto, descripcionDci, estado,
-        estadoDispensa, usuarioCreacion,
+        estadoDispensa, usuarioCreacion, codigoCie10,
         unidades, cantidadAutorizada, diferencia, lineaPendiente, bodegaDetalle, bodegaNorm,
         zona: bodegaToZona.get(bodegaNorm) || 'N/D',
         existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes
@@ -2424,6 +2437,7 @@ async function calcularIndicadores(){
     (byKey.sigla||[]).forEach(r=>{ const s=String(r.sigla||'').trim(); if(s) epsFromReporte.add(s); });
     const epsList=Array.from(epsFromReporte).sort();
     const epsGrupos=Array.from(new Set(rows.map(r=>r.epsGrupo).filter(Boolean))).sort();
+    const cie10List=Array.from(new Set(rows.map(r=>r.codigoCie10).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
     const zonas=Array.from(new Set(rows.map(r=>r.zona).filter(Boolean))).sort();
     const fechas=rows.map(r=>r.fecha).filter(Boolean);
     // Se recorre con un bucle en vez de Math.min(...fechas): con cientos de miles de filas
@@ -2455,7 +2469,7 @@ async function calcularIndicadores(){
     state.diag = diag;
     renderDiagPanel(diag);
 
-    state.processed={rows, contratos, epsList, epsGrupos, zonas, minFecha, maxFecha, hasAvances};
+    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasAvances};
     populateFilters();
     aplicarFiltrosYRenderizar();
     document.getElementById('resCount').textContent=fmtInt(rows.length);
@@ -2477,6 +2491,8 @@ function populateFilters(){
   document.getElementById('filtersBar').style.display='flex';
   document.getElementById('subfiltersBar').style.display='flex';
   const selC=document.getElementById('fContrato'); const selE=document.getElementById('fEps'); const selZ=document.getElementById('fZona'); const selEG=document.getElementById('fEpsGrupo');
+  const selCie=document.getElementById('fCie10');
+  selCie.innerHTML='<option value="">Todos</option>'+(p.cie10List||[]).map(c=>'<option value="'+escHtml(c)+'">'+escHtml(c)+'</option>').join('');
   selC.innerHTML='<option value="">Todos</option>'+p.contratos.map(c=>`<option value="${c}">${c}</option>`).join('');
   selE.innerHTML='<option value="">Todos</option>'+p.epsList.map(c=>`<option value="${c}">${c}</option>`).join('');
   selEG.innerHTML='<option value="">Todas</option>'+p.epsGrupos.map(c=>`<option value="${c}">${c}</option>`).join('');
@@ -2487,17 +2503,24 @@ function populateFilters(){
 document.getElementById('btnAplicarFiltro').addEventListener('click', aplicarFiltrosYRenderizar);
 // Se aplica automáticamente también al cambiar cualquiera de los campos (no solo con el botón),
 // para que volver a poner la fecha completa (o cualquier otro valor) siempre recalcule.
-['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo'].forEach(id=>{
+['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo','fCie10'].forEach(id=>{
   document.getElementById(id).addEventListener('change', aplicarFiltrosYRenderizar);
 });
 document.getElementById('btnLimpiarFiltro').addEventListener('click', ()=>{
   document.getElementById('fFechaDesde').value = state.processed.minFecha ? dateToISO(state.processed.minFecha):'';
   document.getElementById('fFechaHasta').value = state.processed.maxFecha ? dateToISO(state.processed.maxFecha):'';
-  document.getElementById('fContrato').value=''; document.getElementById('fEps').value=''; document.getElementById('fEpsGrupo').value='';
+  document.getElementById('fContrato').value=''; document.getElementById('fEps').value=''; document.getElementById('fEpsGrupo').value=''; document.getElementById('fCie10').value='';
   aplicarFiltrosYRenderizar();
 });
 document.getElementById('fBodegaSearch').addEventListener('input', renderAllTablesFromCache);
 document.getElementById('fZona').addEventListener('change', renderAllTablesFromCache);
+// Selector de usuario de la tabla de dispensas inactivas: solo re-dibuja esa vista
+document.getElementById('fInactivasUsuario').addEventListener('change', ()=>{
+  if(!filteredRowsCache.length) return;
+  const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
+  const zona = document.getElementById('fZona').value;
+  renderIndicadorInactivas(filteredRowsCache, bodegaSearch, zona);
+});
 
 let filteredRowsCache=[];
 
@@ -2510,6 +2533,7 @@ function aplicarFiltrosYRenderizar(){
   const contrato=document.getElementById('fContrato').value;
   const eps=document.getElementById('fEps').value;
   const epsGrupo=document.getElementById('fEpsGrupo').value;
+  const cie10=document.getElementById('fCie10').value;
 
   filteredRowsCache = p.rows.filter(r=>{
     if(desde && r.fecha && r.fecha<desde) return false;
@@ -2517,6 +2541,7 @@ function aplicarFiltrosYRenderizar(){
     if(contrato && r.contrato!==contrato) return false;
     if(eps && r.eps!==eps) return false;
     if(epsGrupo && r.epsGrupo!==epsGrupo) return false;
+    if(cie10 && r.codigoCie10!==cie10) return false;
     return true;
   });
 
@@ -2712,6 +2737,9 @@ function esEstadoActivo(v){
 function soloActivas(rows){
   return rows.filter(r=>esEstadoActivo(r.estadoDispensa));
 }
+// Guarda las dispensas inactivas ya agrupadas (Documento + Bodega) del último render,
+// para que el botón de descarga por bodega exporte exactamente lo que se ve en pantalla.
+let _inactivasDispCache = [];
 function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
   const ambito = rowsAll.filter(r=>{
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
@@ -2757,9 +2785,10 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
       d.lineas++;
       return;
     }
-    dispMap.set(k, {usuario: r.usuarioCreacion || 'SIN USUARIO', bodega: r.bodegaDetalle, zona: r.zona, fecha: r.fecha||null, lineas:1});
+    dispMap.set(k, {usuario: r.usuarioCreacion || 'SIN USUARIO', documento: r.documento || '', bodega: r.bodegaDetalle, zona: r.zona, fecha: r.fecha||null, lineas:1});
   });
   const disp=[...dispMap.values()];
+  _inactivasDispCache = disp;
   const total=disp.length;
   const totalDispensasGlobal=new Set(rowsAll.map(r=>r.dispensaYPunto)).size;
   const usuariosDistintos=new Set(disp.map(d=>d.usuario)).size;
@@ -2775,26 +2804,38 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
     '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
       (fechasAll.length ? escHtml(dateToISO(fechasAll[0])+' → '+dateToISO(fechasAll[fechasAll.length-1])) : '—')+'</div></div>';
 
-  // ---- Por Usuario Creación + Fecha de Dispensacion (cruce de las 3 columnas) ----
+  // ---- Por Usuario Creación (total por usuario, con selector de usuario) ----
   const porUsuario=new Map();
   disp.forEach(d=>{
-    const fISO = d.fecha ? dateToISO(d.fecha) : '—';
-    const k = d.usuario + '||' + fISO;
-    if(!porUsuario.has(k)) porUsuario.set(k, {usuario:d.usuario, fechaISO:fISO, cant:0});
+    const k = d.usuario;
+    if(!porUsuario.has(k)) porUsuario.set(k, {usuario:d.usuario, cant:0});
     porUsuario.get(k).cant++;
   });
-  const listaU=[...porUsuario.values()].sort((a,b)=> (b.cant-a.cant) || a.usuario.localeCompare(b.usuario,'es') || a.fechaISO.localeCompare(b.fechaISO));
+  const listaUFull=[...porUsuario.values()].sort((a,b)=> (b.cant-a.cant) || a.usuario.localeCompare(b.usuario,'es'));
+
+  // Selector de usuario: se repuebla conservando la selección si sigue existiendo
+  const selU=document.getElementById('fInactivasUsuario');
+  let usuarioSel='';
+  if(selU){
+    usuarioSel=selU.value||'';
+    const opciones=listaUFull.map(u=>u.usuario);
+    if(usuarioSel && !opciones.includes(usuarioSel)) usuarioSel='';
+    selU.innerHTML='<option value="">Todos los usuarios</option>'+
+      opciones.map(u=>'<option value="'+escHtml(u)+'">'+escHtml(u)+'</option>').join('');
+    selU.value=usuarioSel;
+  }
+
+  const listaU = usuarioSel ? listaUFull.filter(u=>u.usuario===usuarioSel) : listaUFull;
   const tbU=document.querySelector('#tblInactivasUsuario tbody');
   if(!listaU.length){
-    tbU.innerHTML='<tr><td colspan="4" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
+    tbU.innerHTML='<tr><td colspan="3" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
   }else{
     let h=listaU.map(u=>{
       return '<tr><td class="txt">'+escHtml(u.usuario)+'</td><td>'+fmtInt(u.cant)+'</td>'+
-        '<td>'+fmtPct(total?u.cant/total:null)+'</td>'+
-        '<td class="txt">'+escHtml(u.fechaISO)+'</td></tr>';
+        '<td>'+fmtPct(total?u.cant/total:null)+'</td></tr>';
     }).join('');
-    h+='<tr class="total-row"><td class="txt">TOTAL ('+usuariosDistintos+' usuarios)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
-      '<td class="txt">—</td></tr>';
+    const sumU=listaU.reduce((a,u)=>a+u.cant,0);
+    h+='<tr class="total-row"><td class="txt">TOTAL ('+listaU.length+(listaU.length===1?' usuario)':' usuarios)')+'</td><td>'+fmtInt(sumU)+'</td><td>'+fmtPct(total?sumU/total:null)+'</td></tr>';
     tbU.innerHTML=h;
   }
 
@@ -3492,7 +3533,7 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
     return r.moleculaPareto!=='PARETO' && r.moleculaPareto!=='NO PARETO';
   }).map(r=>({
     'Código Artículo': r.codigoArticulo,
-    'Descripción DCI': r.descripcionDci,
+    'Codigo CIE 10': r.codigoCie10 || '',
     'Bodega Detalle': r.bodegaDetalle,
     'Documento': r.documento,
     'Cantidad Pendiente': Math.abs(r.diferencia)
@@ -3503,6 +3544,48 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
   const fecha=new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, 'Sin_Homologar_'+fecha+'.xlsx');
   showToast('Excel de Sin Homologar exportado: '+fmtInt(sinHom.length)+' líneas.');
+});
+
+// ---- Dispensas inactivas por bodega: resumen + detalle (Documento y Usuario Creación) ----
+document.getElementById('btnDescargarInactivasBodega').addEventListener('click', ()=>{
+  if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
+  const disp = _inactivasDispCache || [];
+  if(!disp.length){ showToast('No hay dispensas inactivas para el filtro actual.', true); return; }
+
+  // Resumen por bodega (mismo orden que la tabla en pantalla)
+  const porBodega=new Map();
+  disp.forEach(d=>{
+    const k=d.bodega||'N/D';
+    if(!porBodega.has(k)) porBodega.set(k, {zona:d.zona||'N/D', bodega:k, cant:0});
+    porBodega.get(k).cant++;
+  });
+  const totalInact = disp.length;
+  const resumen=[...porBodega.values()].sort((a,b)=>b.cant-a.cant).map(b=>({
+    'Zona': b.zona,
+    'Bodega Detalle': b.bodega,
+    'Dispensas inactivas': b.cant,
+    '% del total': totalInact ? b.cant/totalInact : 0
+  }));
+
+  // Detalle: una fila por dispensa inactiva con Documento y Usuario Creación
+  const detalle=disp.slice().sort((a,b)=>
+    String(a.bodega||'').localeCompare(String(b.bodega||''),'es') ||
+    String(a.usuario||'').localeCompare(String(b.usuario||''),'es')
+  ).map(d=>({
+    'Zona': d.zona||'N/D',
+    'Bodega Detalle': d.bodega||'N/D',
+    'Documento': d.documento||'',
+    'Usuario Creación': d.usuario||'SIN USUARIO',
+    'Fecha de Dispensación': d.fecha ? dateToISO(d.fecha) : '',
+    'Líneas': d.lineas
+  }));
+
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Resumen por Bodega');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle Inactivas');
+  const fecha=new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'Dispensas_Inactivas_por_Bodega_'+fecha+'.xlsx');
+  showToast('Excel de dispensas inactivas exportado: '+fmtInt(detalle.length)+' dispensas.');
 });
 
 /* =========================================================================
