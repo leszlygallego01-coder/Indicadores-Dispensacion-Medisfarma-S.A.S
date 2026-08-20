@@ -363,7 +363,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <div class="field"><label>Modalidad</label><select id="fContrato"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS / Sigla Comercial</label><select id="fEps"><option value="">Todos</option></select></div>
       <div class="field grow"><label>EPS Consolidada</label><select id="fEpsGrupo"><option value="">Todas</option></select></div>
-      <div class="field grow"><label>Codigo CIE 10</label><select id="fCie10"><option value="">Todos</option></select></div>
+      <div class="field grow"><label>Diagnóstico</label><select id="fCie10"><option value="">Todos</option></select></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
       <div class="field" style="margin-left:auto;"><label>&nbsp;</label><button class="btn btn-export" id="btnExportar">⬇ Exportar a Excel</button></div>
@@ -715,10 +715,10 @@ const DATASETS = [
   {
     key: 'reporte', tabla: 'Tabla_1', title: 'Reporte de Dispensación', required: true, accumulate: true,
     desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente. Esta tarjeta ya NO acepta cargue manual: sus datos provienen exclusivamente de la carpeta de Google Drive.',
-    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Estado','Usuario Creación','Codigo CIE 10'],
+    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Estado','Usuario Creación','DESCRIPCION CIE 10'],
     fields: {
       documento: ['DOCUMENTO'],
-      codigoCie10: ['CODIGO CIE 10','CODIGO CIE10','CODIGO CIE-10','CÓDIGO CIE 10','CÓDIGO CIE10','CIE 10','CIE10','CIE-10','CODIGO DIAGNOSTICO','CODIGO DE DIAGNOSTICO','DIAGNOSTICO'],
+      codigoCie10: ['DESCRIPCION CIE 10','DESCRIPCIÓN CIE 10','DESCRIPCION CIE10','DESCRIPCIÓN CIE10','DESCRIPCION CIE-10','DESCRIPCION DIAGNOSTICO','DIAGNOSTICO','DIAGNÓSTICO','CODIGO CIE 10','CODIGO CIE10','CODIGO CIE-10','CÓDIGO CIE 10','CIE 10','CIE10','CIE-10'],
       estadoDispensa: ['ESTADO','ESTADO DISPENSA','ESTADO DE LA DISPENSA','ESTADO DE DISPENSA'],
       usuarioCreacion: ['USUARIO CREACION','USUARIO CREACIÓN','USUARIO DE CREACION','USUARIO DE CREACIÓN','USUARIO CREADOR','USUARIO'],
       fechaDispensacion: ['FECHA DE DISPENSACION','FECHA DISPENSACION','FECHA DISPENSACIÓN'],
@@ -1142,7 +1142,7 @@ function showToast(msg,isError){
 // se busca cualquier encabezado que CONTENGA estas palabras. Evita que un cambio de
 // nombre en el archivo original (p. ej. "Estado dispensa 2024") deje el campo vacío.
 const FIELD_FALLBACK_KEYWORDS = {
-  codigoCie10: ['CIE 10','CIE10','CIE-10','CIE','DIAGNOSTIC'],
+  codigoCie10: ['DESCRIPCION CIE','DESCRIPCIÓN CIE','CIE 10','CIE10','CIE-10','CIE','DIAGNOSTIC'],
   estadoDispensa: ['ESTADO'],
   usuarioCreacion: ['USUARIO'],
   bodegaDetalle: ['BODEGA'],
@@ -2384,7 +2384,7 @@ async function calcularIndicadores(){
       const fecha=toDateSafe(r.fechaDispensacion);
       const estadoDispensa=normValue(r.estadoDispensa);
       const usuarioCreacion=String(r.usuarioCreacion||'').trim();
-      const codigoCie10=String(r.codigoCie10||'').trim().toUpperCase() || 'SIN CIE 10';
+      const codigoCie10=String(r.codigoCie10||'').trim().toUpperCase();
       return {
         idx, documento, fecha, eps, epsGrupo, contrato, codigoArticulo, homologo, moleculaPareto, descripcionDci, estado,
         estadoDispensa, usuarioCreacion, codigoCie10,
@@ -3533,7 +3533,6 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
     return r.moleculaPareto!=='PARETO' && r.moleculaPareto!=='NO PARETO';
   }).map(r=>({
     'Código Artículo': r.codigoArticulo,
-    'Codigo CIE 10': r.codigoCie10 || '',
     'Bodega Detalle': r.bodegaDetalle,
     'Documento': r.documento,
     'Cantidad Pendiente': Math.abs(r.diferencia)
