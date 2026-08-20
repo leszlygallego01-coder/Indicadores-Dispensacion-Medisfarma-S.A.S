@@ -595,13 +595,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="seguimiento-section">
           <h3>👤 Dispensas inactivas por Usuario Creación</h3>
-          <p class="seg-desc">Cantidad de dispensas inactivas por usuario, con el rango de fechas (primera y última dispensa inactiva registrada). Ordenado de mayor a menor cantidad.</p>
+          <p class="seg-desc">Cruce de <b>Usuario Creación</b>, <b>Estado</b> (solo INACTIVO) y <b>Fecha de Dispensación</b>: cada fila es un usuario en una fecha concreta. Ordenado de mayor a menor cantidad de dispensas inactivas.</p>
           <div class="table-wrap" style="max-height:460px;">
             <table class="data" id="tblInactivasUsuario">
               <thead>
                 <tr>
-                  <th>Usuario Creación</th><th>Dispensas inactivas</th><th>% del total</th>
-                  <th>Fecha inicial</th><th>Fecha final</th><th>Rango de fechas</th>
+                  <th>Usuario Creación</th><th>Dispensas inactivas</th><th>% del total</th><th>Fecha</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -617,7 +616,6 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <thead>
                 <tr>
                   <th>Zona</th><th>Bodega Detalle</th><th>Dispensas inactivas</th><th>% del total</th>
-                  <th>Fecha inicial</th><th>Fecha final</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -2522,13 +2520,22 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   [1,2,3].forEach(c => {
     (cmAll[c]||[]).forEach(bm => { bodegaMetrics[bm.bodega][c] = bm; });
   });
-  // Re-ordenar bodegas por Índice de Pendientes (mayor a menor) usando corte 3
+  // Ordenar bodegas ESTRICTAMENTE por Índice de Pendientes (mayor a menor).
+  // Se usa la misma fórmula que la celda "Índice de Pendientes" (corte 3 = acumulado final):
+  // Índice = Pendientes totales / Documentos totales. Desempate: más pendientes primero,
+  // luego orden alfabético para que el resultado sea estable.
+  const _idxPend = (b) => {
+    const m = bodegaMetrics[b][3] || {docsTotal:0, docsEnt:0, docsPend:0};
+    const tot = m.docsTotal !== undefined ? m.docsTotal : (m.docsEnt + m.docsPend);
+    return tot ? m.docsPend / tot : 0;
+  };
   bodegas.sort((a,b) => {
-    const aM = bodegaMetrics[a][3] || {docsTotal:0,docsPend:0};
-    const bM = bodegaMetrics[b][3] || {docsTotal:0,docsPend:0};
-    const aIdx = aM.docsTotal ? aM.docsPend / aM.docsTotal : 0;
-    const bIdx = bM.docsTotal ? bM.docsPend / bM.docsTotal : 0;
-    return bIdx - aIdx;
+    const d = _idxPend(b) - _idxPend(a);
+    if(Math.abs(d) > 1e-12) return d;
+    const pa = (bodegaMetrics[a][3]||{docsPend:0}).docsPend || 0;
+    const pb = (bodegaMetrics[b][3]||{docsPend:0}).docsPend || 0;
+    if(pb !== pa) return pb - pa;
+    return a.localeCompare(b,'es');
   });
 
   // Compute totals row per corte
@@ -2670,31 +2677,26 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
     '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
       (fechasAll.length ? escHtml(dateToISO(fechasAll[0])+' → '+dateToISO(fechasAll[fechasAll.length-1])) : '—')+'</div></div>';
 
-  // ---- Por Usuario Creación ----
+  // ---- Por Usuario Creación + Fecha de Dispensacion (cruce de las 3 columnas) ----
   const porUsuario=new Map();
   disp.forEach(d=>{
-    if(!porUsuario.has(d.usuario)) porUsuario.set(d.usuario, {usuario:d.usuario, cant:0, min:null, max:null});
-    const u=porUsuario.get(d.usuario);
-    u.cant++;
-    if(d.fecha){ if(!u.min||d.fecha<u.min) u.min=d.fecha; if(!u.max||d.fecha>u.max) u.max=d.fecha; }
+    const fISO = d.fecha ? dateToISO(d.fecha) : '—';
+    const k = d.usuario + '||' + fISO;
+    if(!porUsuario.has(k)) porUsuario.set(k, {usuario:d.usuario, fechaISO:fISO, cant:0});
+    porUsuario.get(k).cant++;
   });
-  const listaU=[...porUsuario.values()].sort((a,b)=>b.cant-a.cant);
+  const listaU=[...porUsuario.values()].sort((a,b)=> (b.cant-a.cant) || a.usuario.localeCompare(b.usuario,'es') || a.fechaISO.localeCompare(b.fechaISO));
   const tbU=document.querySelector('#tblInactivasUsuario tbody');
   if(!listaU.length){
-    tbU.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
+    tbU.innerHTML='<tr><td colspan="4" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
   }else{
     let h=listaU.map(u=>{
-      const dias = (u.min&&u.max) ? Math.round((u.max-u.min)/86400000)+1 : null;
-      const rango = (u.min&&u.max) ? (dateToISO(u.min)===dateToISO(u.max) ? '1 día' : fmtInt(dias)+' días') : '—';
       return '<tr><td class="txt">'+escHtml(u.usuario)+'</td><td>'+fmtInt(u.cant)+'</td>'+
         '<td>'+fmtPct(total?u.cant/total:null)+'</td>'+
-        '<td class="txt">'+escHtml(u.min?dateToISO(u.min):'—')+'</td>'+
-        '<td class="txt">'+escHtml(u.max?dateToISO(u.max):'—')+'</td>'+
-        '<td class="txt">'+rango+'</td></tr>';
+        '<td class="txt">'+escHtml(u.fechaISO)+'</td></tr>';
     }).join('');
-    h+='<tr class="total-row"><td class="txt">TOTAL ('+listaU.length+' usuarios)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
-      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[0]):'—')+'</td>'+
-      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[fechasAll.length-1]):'—')+'</td><td class="txt">—</td></tr>';
+    h+='<tr class="total-row"><td class="txt">TOTAL ('+usuariosDistintos+' usuarios)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
+      '<td class="txt">—</td></tr>';
     tbU.innerHTML=h;
   }
 
@@ -2702,23 +2704,17 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
   const porBodega=new Map();
   disp.forEach(d=>{
     const k=d.bodega||'N/D';
-    if(!porBodega.has(k)) porBodega.set(k, {bodega:k, zona:d.zona||'N/D', cant:0, min:null, max:null});
-    const b=porBodega.get(k);
-    b.cant++;
-    if(d.fecha){ if(!b.min||d.fecha<b.min) b.min=d.fecha; if(!b.max||d.fecha>b.max) b.max=d.fecha; }
+    if(!porBodega.has(k)) porBodega.set(k, {bodega:k, zona:d.zona||'N/D', cant:0});
+    porBodega.get(k).cant++;
   });
   const listaB=[...porBodega.values()].sort((a,b)=>b.cant-a.cant);
   const tbB=document.querySelector('#tblInactivasBodega tbody');
   if(!listaB.length){
-    tbB.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
+    tbB.innerHTML='<tr><td colspan="4" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
   }else{
     let h=listaB.map(b=>'<tr><td class="txt">'+escHtml(b.zona)+'</td><td class="txt">'+escHtml(b.bodega)+'</td>'+
-      '<td>'+fmtInt(b.cant)+'</td><td>'+fmtPct(total?b.cant/total:null)+'</td>'+
-      '<td class="txt">'+escHtml(b.min?dateToISO(b.min):'—')+'</td>'+
-      '<td class="txt">'+escHtml(b.max?dateToISO(b.max):'—')+'</td></tr>').join('');
-    h+='<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL ('+listaB.length+' bodegas)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
-      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[0]):'—')+'</td>'+
-      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[fechasAll.length-1]):'—')+'</td></tr>';
+      '<td>'+fmtInt(b.cant)+'</td><td>'+fmtPct(total?b.cant/total:null)+'</td></tr>').join('');
+    h+='<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL ('+listaB.length+' bodegas)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td></tr>';
     tbB.innerHTML=h;
   }
 }
