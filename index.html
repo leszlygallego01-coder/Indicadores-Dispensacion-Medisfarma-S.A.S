@@ -807,7 +807,7 @@ function deserializeFromFirestore(doc){
    Se usa IndexedDB (no localStorage) porque el acumulado del Reporte puede
    superar facilmente la cuota de localStorage.
    ========================================================================= */
-const DRIVE_ONLY_KEYS = ['inventario', 'reporte'];
+const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo'];
 function isDriveOnlyKey(k){ return DRIVE_ONLY_KEYS.indexOf(k) >= 0; }
 
 const LOCAL_DB_NAME = 'medisfarma_drive_local';
@@ -941,9 +941,12 @@ async function idbDelete(key) {
       try { localStorage.removeItem('inventario_data'); } catch(e) {}
       try { localStorage.removeItem('inventario_drive_files'); } catch(e) {}
       _driveFiles = [];
-    } else {
+    } else if (key === 'reporte') {
       try { localStorage.removeItem('reporte_drive_files'); } catch(e) {}
       _driveFilesReporte = [];
+    } else if (key === 'homologo') {
+      // Homologo NO usa localStorage: solo memoria + IndexedDB
+      _driveFilesHomologo = [];
     }
     delete state.loaded[key];
     return;
@@ -972,6 +975,7 @@ async function idbClearAll() {
   try { localStorage.removeItem('reporte_drive_files'); } catch(e) {}
   _driveFiles = [];
   _driveFilesReporte = [];
+  _driveFilesHomologo = [];
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1197,10 +1201,13 @@ function updateCalcButton(){
    ========================================================================= */
 const DRIVE_FOLDER_ID = '1eHRKlKXViXc5F_2yNPIXFCYsd-V26EpU';            // Inventario General
 const DRIVE_FOLDER_REPORTE = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';       // Reportes de Dispensación
+const DRIVE_FOLDER_HOMOLOGO = '11UzrdMdVlcwZFWusXg5fUastekt0eRPb';      // Tabla Homólogo
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 let _driveSyncing = false;
 let _driveSyncingReporte = false;
+let _driveSyncingHomologo = false;
 let _driveFilesReporte = [];
+let _driveFilesHomologo = []; // solo en memoria: Homologo no usa localStorage
 let _driveFiles = []; // archivos listados del folder de Drive
 
 /* Fila de configuracion del acceso a Google (boton + ID actual acortado) */
@@ -1349,6 +1356,63 @@ function reporteCardHTML(d, loaded) {
   if (loaded && loaded.updatedAt) {
     const sd = new Date(loaded.updatedAt);
     html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b> · ' + fmtInt(loaded.rowCount) + ' filas acumuladas.</div>';
+  }
+
+  return html;
+}
+
+/* ---------- Tarjeta "Homólogo": solo Google Drive (reemplaza, no acumula) ---------- */
+function homologoCardHTML(d, loaded) {
+  const syncing = _driveSyncingHomologo;
+  let html = '';
+
+  html += '<h3>' + d.title + ' <span class="drive-badge">☁️ solo Google Drive</span></h3>';
+  html += '<p class="desc">' + d.desc + '</p>';
+  html += '<div class="cols">' + d.cols.join(' · ') + '</div>';
+
+  html += '<div class="drive-folder-info">📂 Carpeta Drive: <code>Homólogo</code><br>ID: <code>' + DRIVE_FOLDER_HOMOLOGO + '</code></div>';
+
+  html += '<button class="drive-sync-btn" id="btnDriveSyncHomologo" onclick="syncHomologoFromDrive()"' + (syncing ? ' disabled' : '') + '>';
+  html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Homólogo" (Drive)';
+  html += '</button>';
+
+  html += driveConfigRowHTML();
+
+  if (_driveErrorHomologo) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorHomologo) + '</div>';
+  }
+
+  html += '<div class="status-row">';
+  if (loaded) {
+    html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas</span>';
+    html += '<button class="clear" data-key="' + d.key + '">Quitar</button>';
+  } else {
+    html += '<span class="empty">Sin cargar</span><span></span>';
+  }
+  html += '</div>';
+
+  if (loaded && loaded.fileName) {
+    html += '<div class="filename">Archivo: ' + escapeHtmlTxt(loaded.fileName) + '</div>';
+  }
+
+  if (_driveFilesHomologo.length > 0) {
+    html += '<div class="drive-file-list">';
+    for (let i = 0; i < _driveFilesHomologo.length; i++) {
+      const f = _driveFilesHomologo[i];
+      html += '<div class="drive-file-item">';
+      html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
+      if (f.modifiedTime) {
+        const dt = new Date(f.modifiedTime);
+        html += '<span class="fdate">' + dt.toLocaleDateString('es') + ' ' + dt.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  if (loaded && loaded.updatedAt) {
+    const sd = new Date(loaded.updatedAt);
+    html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b></div>';
   }
 
   return html;
@@ -1694,6 +1758,56 @@ async function syncReporteFromDrive() {
   }
 }
 
+/* ---------- Sincronización Drive de "Homólogo" (REEMPLAZA, no acumula) ----------
+   Lee el archivo más reciente de la carpeta de Drive y sustituye por completo el
+   catálogo maestro. Los datos quedan solo en el almacén local del navegador. */
+async function syncHomologoFromDrive() {
+  if (_driveSyncingHomologo) return;
+  _driveSyncingHomologo = true;
+  renderUploadCards();
+
+  const KEY = 'homologo';
+  const def = DATASETS.find(d => d.key === KEY);
+
+  try {
+    clearDriveError('homologo');
+    const accessToken = await authenticateDrive();
+
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_HOMOLOGO);
+    if (!files || !files.length) throw new Error('NO_FILES');
+
+    _driveFilesHomologo = files.map(f => ({ name: f.name, modifiedTime: f.modifiedTime }));
+
+    // El más reciente manda: este catálogo reemplaza, no acumula
+    const newest = files.slice().sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+
+    showToast('Leyendo desde Drive: ' + newest.name + '…');
+    const buf = await downloadDriveFile(accessToken, newest.id, newest.mimeType);
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true, dense: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!aoa.length) throw new Error('El archivo está vacío.');
+
+    const rows = parseRowsFromAOA(aoa, def);
+    if (!rows.length) {
+      showToast('No se encontraron filas de datos en el archivo de Drive.', true);
+      return;
+    }
+
+    await idbPut({ key: KEY, rows, fileName: newest.name, batches: null, updatedAt: new Date().toISOString() });
+
+    showToast('"' + def.title + '" sincronizado desde Drive: ' + fmtInt(rows.length) + ' filas (catálogo reemplazado).');
+
+    await refreshStatusFromDB();
+  } catch (err) {
+    console.error('Drive sync error (homologo):', err);
+    showDriveError('homologo', driveErrorMessage(err), err);
+  } finally {
+    _driveSyncingHomologo = false;
+    renderUploadCards();
+  }
+}
+
 /* ---------- Capa de diagnostico para llamadas a Google Drive ----------
    Antes cualquier fallo se convertia en un mensaje generico de "sin permiso",
    lo que hacia imposible saber que estaba pasando realmente. Ahora se conserva
@@ -1846,6 +1960,7 @@ function driveErrorMessage(err) {
    y ademas lo muestra como aviso. */
 let _driveErrorInventario = '';
 let _driveErrorReporte = '';
+let _driveErrorHomologo = '';
 function escapeHtmlTxt(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1856,11 +1971,15 @@ function showDriveError(which, message, err) {
   if (tech) console.warn('Detalle tecnico Drive (' + which + '):', tech);
   let full = message;
   if (_driveAccountEmail) full += '\nSesion iniciada con: ' + _driveAccountEmail;
-  if (which === 'reporte') _driveErrorReporte = full; else _driveErrorInventario = full;
+  if (which === 'reporte') _driveErrorReporte = full;
+  else if (which === 'homologo') _driveErrorHomologo = full;
+  else _driveErrorInventario = full;
   showToast(message, true);
 }
 function clearDriveError(which) {
-  if (which === 'reporte') _driveErrorReporte = ''; else _driveErrorInventario = '';
+  if (which === 'reporte') _driveErrorReporte = '';
+  else if (which === 'homologo') _driveErrorHomologo = '';
+  else _driveErrorInventario = '';
 }
 
 function parseRowsFromAOA(aoa, datasetDef) {
@@ -1929,6 +2048,9 @@ function renderUploadCards(){
     } else if(d.key === 'reporte') {
       card.className = 'card drive-reporte required' + (loaded ? ' loaded' : '');
       card.innerHTML = reporteCardHTML(d, loaded);
+    } else if(d.key === 'homologo') {
+      card.className = 'card drive-only required' + (loaded ? ' loaded' : '');
+      card.innerHTML = homologoCardHTML(d, loaded);
     } else {
       card.innerHTML = `<h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
       <p class="desc">${d.desc}</p>
