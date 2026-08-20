@@ -273,6 +273,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
 /* Drive Sync Button */
 .drive-sync-btn{background:var(--blue);color:white;border:none;border-radius:8px;padding:12px 20px;cursor:pointer;font-size:14px;width:100%;transition:background .2s,opacity .2s;font-family:var(--body);font-weight:600;}
+.drive-error{margin-top:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}
 .drive-sync-btn:hover{background:var(--blue-deep);}
 .drive-sync-btn:disabled{opacity:0.6;cursor:wait;}
 .spinner-inline{display:inline-block;width:18px;height:18px;border:2px solid #fff3;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px;}
@@ -1125,6 +1126,10 @@ function inventarioCardHTML(d, loaded) {
   html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta';
   html += '</button>';
 
+  if (_driveErrorInventario) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorInventario) + '</div>';
+  }
+
   // Estado: filas cargadas + botón quitar
   html += '<div class="status-row">';
   if (loaded) {
@@ -1181,6 +1186,10 @@ function reporteCardHTML(d, loaded) {
   html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Reportes de Dispensación" (Drive)';
   html += '</button>';
 
+  if (_driveErrorReporte) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorReporte) + '</div>';
+  }
+
   html += '<div class="status-row">';
   if (loaded) {
     html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas' + (nBatches > 1 ? ' · ' + nBatches + ' cargues' : '') + '</span>';
@@ -1230,30 +1239,46 @@ function reporteCardHTML(d, loaded) {
 
 /* --- Firebase Auth Google Sign-In (primary) for Drive access --- */
 
-async function authenticateDrive() {
-  // PRIMARY: Use Firebase Auth's Google sign-in to obtain a Drive access token.
-  // Firebase already has the OAuth client configured for Google sign-in,
-  // so we don't need a separate client_id. signInWithPopup returns
-  // credential.accessToken which works with Google Drive APIs.
+let _driveToken = null;          // token en memoria para no repetir el popup
+let _driveTokenAt = 0;           // marca de tiempo de obtencion
+let _driveAccountEmail = '';     // cuenta con la que se autorizo
+
+async function authenticateDrive(forceConsent) {
+  // Reutiliza el token si aun es fresco (los de Google duran ~1 hora; usamos 45 min)
+  if (!forceConsent && _driveToken && (Date.now() - _driveTokenAt) < 45 * 60 * 1000) {
+    return _driveToken;
+  }
   try {
     const provider = new firebase.auth.GoogleAuthProvider();
     // Request Drive readonly scope so the access token can read the folder
     provider.addScope(DRIVE_SCOPES);
+    // 'consent' fuerza la pantalla de permisos: sin esto, si el usuario ya habia
+    // entrado antes SIN aceptar Drive, Google devuelve un token sin ese permiso
+    // y la lectura de la carpeta falla con 403 sin explicacion.
+    provider.setCustomParameters({ prompt: 'consent', include_granted_scopes: 'true' });
     const result = await firebase.auth().signInWithPopup(provider);
     // credential.accessToken is the Google OAuth access token
     const credential = result.credential;
     if (credential && credential.accessToken) {
-      console.log('Drive auth via Firebase Auth succeeded for:', result.user.email);
-      return credential.accessToken;
+      _driveToken = credential.accessToken;
+      _driveTokenAt = Date.now();
+      _driveAccountEmail = (result.user && result.user.email) || '';
+      console.log('Drive auth via Firebase Auth succeeded for:', _driveAccountEmail);
+      const hasScope = await driveTokenHasDriveScope(_driveToken);
+      if (hasScope === false) { _driveToken = null; throw new Error('NO_SCOPE'); }
+      return _driveToken;
     }
     throw new Error('No access token in Firebase credential');
   } catch (err) {
     // Handle specific Firebase Auth errors
+    if (err.message === 'NO_SCOPE') throw err;
     if (err.code === 'auth/popup-closed-by-user') {
-      throw new Error('Ventana de inicio de sesión cerrada por el usuario.');
+      const e = new Error('Ventana de inicio de sesion cerrada por el usuario.');
+      e.code = err.code; throw e;
     }
     if (err.code === 'auth/cancelled-popup-request') {
-      throw new Error('Solicitud de inicio de sesión cancelada.');
+      const e = new Error('Solicitud de inicio de sesion cancelada.');
+      e.code = err.code; throw e;
     }
     // FALLBACK: If Firebase Auth is not available, try GIS token client
     // This requires a valid client_id which we don't have, but try anyway
@@ -1295,6 +1320,7 @@ async function syncInventarioFromDrive() {
   renderUploadCards(); // re-render to show spinner
 
   try {
+    clearDriveError('inventario');
     // Step 1: Authenticate
     const accessToken = await authenticateDrive();
 
@@ -1345,22 +1371,8 @@ async function syncInventarioFromDrive() {
     updateTopStatus();
     updateCalcButton();
   } catch (err) {
-    console.error('Drive sync error:', err);
-    let msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
-    if (err.message === 'NO_FILES') {
-      msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
-    } else if (err.message === 'Ventana de inicio de sesión cerrada por el usuario.') {
-      msg = err.message;
-    } else if (err.message === 'Solicitud de inicio de sesión cancelada.') {
-      msg = err.message;
-    } else if (err.message === 'No access token in Firebase credential') {
-      msg = 'Error de autenticación: no se obtuvo token de acceso. Intenta de nuevo.';
-    } else if (err.code === 'auth/unauthorized-domain') {
-      msg = 'Este dominio no está autorizado para inicio de sesión con Google. Contacta al administrador.';
-    } else if (err.code === 'auth/network-request-failed') {
-      msg = 'Error de red al autenticar. Verifica tu conexión e intenta de nuevo.';
-    }
-    showToast(msg, true);
+    console.error('Drive sync error (inventario):', err);
+    showDriveError('inventario', driveErrorMessage(err), err);
   } finally {
     _driveSyncing = false;
     renderUploadCards(); // re-render to remove spinner
@@ -1379,6 +1391,7 @@ async function syncReporteFromDrive() {
   const def = DATASETS.find(d => d.key === KEY);
 
   try {
+    clearDriveError('reporte');
     const accessToken = await authenticateDrive();
 
     const files = await listDriveFiles(accessToken, DRIVE_FOLDER_REPORTE);
@@ -1448,39 +1461,84 @@ async function syncReporteFromDrive() {
     await refreshStatusFromDB();
   } catch (err) {
     console.error('Drive sync error (reporte):', err);
-    let msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
-    if (err.message === 'NO_FILES' || err.message === 'NO_PERMISSION') {
-      msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
-    } else if (err.message === 'Ventana de inicio de sesión cerrada por el usuario.'
-            || err.message === 'Solicitud de inicio de sesión cancelada.') {
-      msg = err.message;
-    } else if (err.message === 'No access token in Firebase credential') {
-      msg = 'Error de autenticación: no se obtuvo token de acceso. Intenta de nuevo.';
-    } else if (err.code === 'auth/unauthorized-domain') {
-      msg = 'Este dominio no está autorizado para inicio de sesión con Google. Contacta al administrador.';
-    } else if (err.code === 'auth/network-request-failed') {
-      msg = 'Error de red al autenticar. Verifica tu conexión e intenta de nuevo.';
-    }
-    showToast(msg, true);
+    showDriveError('reporte', driveErrorMessage(err), err);
   } finally {
     _driveSyncingReporte = false;
     renderUploadCards();
   }
 }
 
+/* ---------- Capa de diagnostico para llamadas a Google Drive ----------
+   Antes cualquier fallo se convertia en un mensaje generico de "sin permiso",
+   lo que hacia imposible saber que estaba pasando realmente. Ahora se conserva
+   el codigo HTTP y el mensaje textual que devuelve la API de Drive. */
+async function driveApiFetch(url, accessToken) {
+  let resp;
+  try {
+    resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + accessToken } });
+  } catch (netErr) {
+    const e = new Error('DRIVE_NETWORK');
+    e.driveDetail = netErr && netErr.message ? netErr.message : 'fallo de red';
+    throw e;
+  }
+  if (!resp.ok) {
+    let detail = '';
+    try {
+      const j = await resp.json();
+      if (j && j.error) detail = j.error.message || j.error.status || '';
+    } catch (e) { /* respuesta sin JSON */ }
+    const e = new Error('DRIVE_HTTP_' + resp.status);
+    e.httpStatus = resp.status;
+    e.driveDetail = detail;
+    throw e;
+  }
+  return resp;
+}
+
+// Verifica si el token realmente incluye permiso de lectura de Drive
+async function driveTokenHasDriveScope(accessToken) {
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=' + encodeURIComponent(accessToken));
+    if (!r.ok) return null; // no se pudo verificar
+    const j = await r.json();
+    return String(j.scope || '').indexOf('drive') >= 0;
+  } catch (e) { return null; }
+}
+
+function isSpreadsheetFile(f) {
+  const m = String(f.mimeType || '').toLowerCase();
+  const n = String(f.name || '').toLowerCase();
+  if (m.indexOf('spreadsheet') >= 0) return true;
+  if (m === 'application/vnd.ms-excel' || m === 'text/csv' || m === 'application/csv') return true;
+  return /\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/.test(n);
+}
+
 async function listDriveFiles(accessToken, folderId) {
   const fid = folderId || DRIVE_FOLDER_ID;
-  const q = "'" + fid + "' in parents and trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='application/vnd.ms-excel' or mimeType='text/csv' or mimeType='application/vnd.google-apps.spreadsheet')";
-  const url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=100';
-  const resp = await fetch(url, {
-    headers: { 'Authorization': 'Bearer ' + accessToken }
-  });
-  if (!resp.ok) {
-    if (resp.status === 403 || resp.status === 404) throw new Error('NO_PERMISSION');
-    throw new Error('Drive API error: ' + resp.status);
-  }
+  // Consulta permisiva: todo lo que no sea carpeta. El filtrado por tipo de
+  // archivo se hace despues en el navegador, asi un mimeType inesperado
+  // (p. ej. octet-stream) ya no hace que la carpeta parezca vacia.
+  const q = "'" + fid + "' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'";
+  const url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q)
+    + '&fields=files(id,name,mimeType,modifiedTime,size)'
+    + '&orderBy=modifiedTime desc&pageSize=200'
+    + '&supportsAllDrives=true&includeItemsFromAllDrives=true';
+  const resp = await driveApiFetch(url, accessToken);
   const data = await resp.json();
-  return data.files || [];
+  const all = data.files || [];
+  if (!all.length) {
+    const e = new Error('NO_FILES');
+    e.driveDetail = 'La carpeta ' + fid + ' respondio 0 archivos para esta cuenta de Google.';
+    throw e;
+  }
+  const ok = all.filter(isSpreadsheetFile);
+  if (!ok.length) {
+    const e = new Error('NO_SPREADSHEETS');
+    e.driveDetail = 'Se vieron ' + all.length + ' archivo(s) pero ninguno se reconocio como Excel/CSV: '
+      + all.slice(0, 5).map(function(f){ return f.name + ' [' + f.mimeType + ']'; }).join(', ');
+    throw e;
+  }
+  return ok;
 }
 
 async function downloadDriveFile(accessToken, fileId, mimeType) {
@@ -1488,13 +1546,83 @@ async function downloadDriveFile(accessToken, fileId, mimeType) {
   if (mimeType === 'application/vnd.google-apps.spreadsheet') {
     url = 'https://www.googleapis.com/drive/v3/files/' + fileId + '/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   } else {
-    url = 'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media';
+    url = 'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media&supportsAllDrives=true';
   }
-  const resp = await fetch(url, {
-    headers: { 'Authorization': 'Bearer ' + accessToken }
-  });
-  if (!resp.ok) throw new Error('Download error: ' + resp.status);
+  const resp = await driveApiFetch(url, accessToken);
   return resp.arrayBuffer();
+}
+
+/* Traduce cualquier fallo de Drive/Auth a un mensaje concreto y accionable. */
+function driveErrorMessage(err) {
+  const code = (err && err.code) || '';
+  const msg = (err && err.message) || '';
+  const detail = (err && err.driveDetail) || '';
+
+  // --- Errores de inicio de sesion (Firebase Auth) ---
+  if (code === 'auth/operation-not-allowed')
+    return 'El inicio de sesion con Google no esta habilitado en Firebase. Activalo en Firebase Console > Authentication > Sign-in method > Google.';
+  if (code === 'auth/unauthorized-domain')
+    return 'Este dominio no esta autorizado. Agregalo en Firebase Console > Authentication > Settings > Dominios autorizados.';
+  if (code === 'auth/popup-blocked')
+    return 'El navegador bloqueo la ventana de Google. Permite las ventanas emergentes de este sitio e intenta de nuevo.';
+  if (code === 'auth/popup-closed-by-user' || msg === 'Ventana de inicio de sesion cerrada por el usuario.')
+    return 'Se cerro la ventana de Google antes de terminar. Vuelve a intentarlo y acepta el permiso de lectura de Drive.';
+  if (code === 'auth/cancelled-popup-request' || msg === 'Solicitud de inicio de sesion cancelada.')
+    return 'Se cancelo la solicitud de inicio de sesion. Intenta una sola vez y espera la ventana de Google.';
+  if (msg === 'No access token in Firebase credential')
+    return 'Google no devolvio un token de acceso. Cierra sesion de Google en el navegador y vuelve a sincronizar.';
+  if (msg === 'NO_SCOPE')
+    return 'Iniciaste sesion pero NO se concedio el permiso "Ver tus archivos de Google Drive". Vuelve a sincronizar y acepta esa casilla en la pantalla de Google.';
+
+  // --- Errores de la API de Drive ---
+  if (err && err.httpStatus === 401)
+    return 'Google rechazo el token (401): la sesion expiro o falta el permiso de lectura de Drive. Vuelve a sincronizar y acepta el permiso.' + (detail ? ' [' + detail + ']' : '');
+  if (err && err.httpStatus === 403) {
+    if (/insufficient|scope|permission/i.test(detail))
+      return 'El token no tiene permiso de lectura de Drive (403). En la pantalla de Google debes aceptar "Ver tus archivos de Google Drive". [' + detail + ']';
+    if (/has not been used|disabled|not enabled|Drive API/i.test(detail))
+      return 'La API de Google Drive no esta habilitada en el proyecto de Google Cloud asociado a Firebase. Habilitala en Google Cloud > APIs y servicios > Google Drive API. [' + detail + ']';
+    if (/rateLimit|quota|userRateLimit/i.test(detail))
+      return 'Google limito temporalmente las peticiones (403). Espera un minuto e intenta de nuevo. [' + detail + ']';
+    return 'Google Drive rechazo la peticion (403). [' + (detail || 'sin detalle') + ']';
+  }
+  if (err && err.httpStatus === 404)
+    return 'La carpeta no existe o la cuenta con la que iniciaste sesion no la ve (404). Verifica el ID de la carpeta y que sea la misma cuenta duena del Drive. [' + (detail || '') + ']';
+  if (err && err.httpStatus)
+    return 'Error ' + err.httpStatus + ' de Google Drive. [' + (detail || 'sin detalle') + ']';
+  if (msg === 'DRIVE_NETWORK' || code === 'auth/network-request-failed')
+    return 'Error de red al contactar Google. Revisa la conexion, la VPN o el bloqueador de anuncios. [' + (detail || '') + ']';
+
+  // --- Contenido de la carpeta ---
+  if (msg === 'NO_FILES')
+    return 'La carpeta respondio 0 archivos para la cuenta con la que iniciaste sesion. Asegurate de iniciar sesion con la MISMA cuenta que ve los archivos, o comparte la carpeta con esa cuenta. [' + (detail || '') + ']';
+  if (msg === 'NO_SPREADSHEETS')
+    return 'La carpeta tiene archivos, pero ninguno se reconocio como Excel/CSV. [' + (detail || '') + ']';
+  if (msg === 'NO_PERMISSION')
+    return 'No tienes permiso de lectura sobre la carpeta de Google Drive.';
+
+  return 'Fallo la sincronizacion con Drive: ' + (msg || 'error desconocido') + (detail ? ' [' + detail + ']' : '');
+}
+
+/* Guarda el error para mostrarlo DENTRO de la tarjeta (el toast desaparece muy rapido)
+   y ademas lo muestra como aviso. */
+let _driveErrorInventario = '';
+let _driveErrorReporte = '';
+function escapeHtmlTxt(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function showDriveError(which, message, err) {
+  const tech = err ? ((err.message || '') + (err.code ? ' / ' + err.code : '') + (err.driveDetail ? ' / ' + err.driveDetail : '')) : '';
+  if (tech) console.warn('Detalle tecnico Drive (' + which + '):', tech);
+  let full = message;
+  if (_driveAccountEmail) full += '\nSesion iniciada con: ' + _driveAccountEmail;
+  if (which === 'reporte') _driveErrorReporte = full; else _driveErrorInventario = full;
+  showToast(message, true);
+}
+function clearDriveError(which) {
+  if (which === 'reporte') _driveErrorReporte = ''; else _driveErrorInventario = '';
 }
 
 function parseRowsFromAOA(aoa, datasetDef) {
