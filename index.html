@@ -449,6 +449,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <div class="legend" id="pieLegend"></div>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
+            <p class="seg-desc" style="margin-bottom:8px;"><b>Orden:</b> bodegas ordenadas por <b>Índice pendiente</b> de mayor a menor (las más críticas primero).</p>
             <table class="data" id="tblDispensa">
               <thead>
                 <tr>
@@ -516,7 +517,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
 
         <div class="table-wrap">
-          <p class="seg-desc" style="margin-bottom:8px;"><b>Orden:</b> bodegas ordenadas por Eficiencia Final Pareto de mayor a menor. La columna <b>Sin Homologar</b> cuenta las líneas pendientes cuyo código no tiene clasificación PARETO / NO PARETO en el catálogo Homólogo.</p>
+          <p class="seg-desc" style="margin-bottom:8px;"><b>Orden:</b> bodegas ordenadas por <b>Efic. final</b> de Eficiencia Pareto (cantidad), de mayor a menor porcentaje. La columna <b>Sin Homologar</b> cuenta las líneas pendientes cuyo código no tiene clasificación PARETO / NO PARETO en el catálogo Homólogo.</p>
           <table class="data" id="tblLinea">
             <thead>
               <tr>
@@ -591,6 +592,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <!-- ---- SUBVISTA: DISPENSAS INACTIVAS ---- -->
       <div class="subview" id="sub-inactivas">
         <div class="helpbox">Este indicador toma únicamente las dispensas cuyo <b>Estado</b> es <b>INACTIVO</b> en el Reporte de Dispensación. Se cuentan dispensas únicas (Documento) y se respetan los filtros activos de la pantalla.</div>
+        <div class="helpbox" id="inactivasDiag" style="display:none;"></div>
         <div class="stat-row" id="statsInactivas"></div>
 
         <div class="seguimiento-section">
@@ -1125,20 +1127,59 @@ function showToast(msg,isError){
 /* =========================================================================
    4. Parseo de archivos
    ========================================================================= */
+// Palabras clave de respaldo: si ninguno de los alias exactos existe en el archivo,
+// se busca cualquier encabezado que CONTENGA estas palabras. Evita que un cambio de
+// nombre en el archivo original (p. ej. "Estado dispensa 2024") deje el campo vacío.
+const FIELD_FALLBACK_KEYWORDS = {
+  estadoDispensa: ['ESTADO'],
+  usuarioCreacion: ['USUARIO'],
+  bodegaDetalle: ['BODEGA'],
+  fechaDispensacion: ['FECHA DISPENS', 'FECHA DE DISPENS'],
+  cantidadAutorizada: ['AUTORIZAD'],
+  soportes: ['SOPORTE'],
+  documento: ['DOCUMENTO']
+};
+function findHeaderByKeyword(headerIndex, keywords){
+  for (const kw of keywords){
+    for (const h of headerIndex.keys()){
+      if (h.includes(kw)) return headerIndex.get(h);
+    }
+  }
+  return -1;
+}
 function mapRowToFields(rawRow, headerIndex, fieldsDef){
   const out={};
   for (const fieldName in fieldsDef){
-    let val='';
+    let val='', matched=false;
     for (const alias of fieldsDef[fieldName]){
       const key=normHeader(alias);
       if (headerIndex.has(key)){
+        matched=true;
         const col=headerIndex.get(key); val=rawRow[col];
         if (val!==undefined && val!==null && val!=='') break;
       }
     }
+    // Respaldo por palabra clave solo si el encabezado exacto no existe en el archivo
+    if (!matched && FIELD_FALLBACK_KEYWORDS[fieldName]){
+      const col=findHeaderByKeyword(headerIndex, FIELD_FALLBACK_KEYWORDS[fieldName]);
+      if (col>=0) val=rawRow[col];
+    }
     out[fieldName]= val===undefined ? '' : val;
   }
   return out;
+}
+// Completa en una fila ya guardada los campos que estén vacíos usando una fila
+// recién leída del archivo. Sirve para "reparar" el acumulado histórico cuando se
+// agregan columnas nuevas (Estado, Usuario Creación) que antes no se guardaban.
+function completarCamposFaltantes(destino, origen){
+  let cambios=0;
+  for (const f in origen){
+    const nuevo=origen[f];
+    if (nuevo===undefined || nuevo===null || nuevo==='') continue;
+    const actual=destino[f];
+    if (actual===undefined || actual===null || actual===''){ destino[f]=nuevo; cambios++; }
+  }
+  return cambios;
 }
 async function parseFile(file, datasetDef){
   const buf=await file.arrayBuffer();
@@ -1742,11 +1783,12 @@ async function syncReporteFromDrive() {
       ? existing.batches
       : (existing ? [{ fileName: existing.fileName, rowCount: prevRows.length, addedCount: prevRows.length, uploadedAt: existing.updatedAt }] : []);
 
-    const seen = new Set(prevRows.map(r => dedupKeyFor(KEY, r)));
+    const seen = new Map();
+    prevRows.forEach(r => { const k = dedupKeyFor(KEY, r); if(!seen.has(k)) seen.set(k, r); });
     const merged = prevRows.slice();
     const batches = prevBatches.slice();
 
-    let totalAdded = 0, totalSkipped = 0, lastFileName = '';
+    let totalAdded = 0, totalSkipped = 0, totalReparadas = 0, lastFileName = '';
 
     for (let i = 0; i < ordered.length; i++) {
       const f = ordered[i];
@@ -1765,13 +1807,19 @@ async function syncReporteFromDrive() {
       }
       if (!rows || !rows.length) continue;
 
-      let added = 0, skipped = 0;
+      let added = 0, skipped = 0, reparadas = 0;
       for (let j = 0; j < rows.length; j++) {
         const k = dedupKeyFor(KEY, rows[j]);
-        if (seen.has(k)) { skipped++; continue; }
-        seen.add(k); merged.push(rows[j]); added++;
+        if (seen.has(k)) {
+          skipped++;
+          // La fila ya estaba guardada: completamos los campos que estén vacíos
+          // (Estado, Usuario Creación, etc.) para no perder datos del acumulado antiguo.
+          if (completarCamposFaltantes(seen.get(k), rows[j])) reparadas++;
+          continue;
+        }
+        seen.set(k, rows[j]); merged.push(rows[j]); added++;
       }
-      totalAdded += added; totalSkipped += skipped;
+      totalAdded += added; totalSkipped += skipped; totalReparadas += reparadas;
       lastFileName = f.name;
 
       // Solo registramos un "cargue" si aportó filas nuevas
@@ -1789,6 +1837,7 @@ async function syncReporteFromDrive() {
 
     showToast('"' + def.title + '" sincronizado desde Drive: +' + fmtInt(totalAdded) + ' filas nuevas'
       + (totalSkipped ? (' (' + fmtInt(totalSkipped) + ' ya existían, se omitieron)') : '')
+      + (totalReparadas ? (' · ' + fmtInt(totalReparadas) + ' filas actualizadas con Estado/Usuario') : '')
       + '. Total acumulado: ' + fmtInt(merged.length) + ' filas.');
 
     await refreshStatusFromDB();
@@ -2169,21 +2218,27 @@ async function handleFileSelected(key,file){
       const prevBatches = existing && existing.batches
         ? existing.batches
         : (existing ? [{fileName:existing.fileName, rowCount:prevRows.length, addedCount:prevRows.length, uploadedAt:existing.updatedAt}] : []);
-      const seen = new Set(prevRows.map(r=>dedupKeyFor(key,r)));
+      const seen = new Map();
+      prevRows.forEach(r => { const k = dedupKeyFor(key, r); if(!seen.has(k)) seen.set(k, r); });
       const merged = prevRows.slice();
       const nowISO = new Date().toISOString();
-      let added=0, skipped=0;
+      let added=0, skipped=0, reparadas=0;
       rows.forEach(r=>{
         const k=dedupKeyFor(key,r);
-        if(seen.has(k)){ skipped++; return; }
+        if(seen.has(k)){
+          skipped++;
+          // Fila ya guardada: rellenamos los campos vacíos (Estado, Usuario Creación...)
+          if(completarCamposFaltantes(seen.get(k), r)) reparadas++;
+          return;
+        }
         // Para "avances" guardamos la fecha de cargue en cada fila: sirve para el
         // Reporte Comparativo Periódico (cortes de 1-10 / 11-20 / 21-31).
         if(key==='avances') r._fechaCargue = nowISO;
-        seen.add(k); merged.push(r); added++;
+        seen.set(k, r); merged.push(r); added++;
       });
       const batches = prevBatches.concat([{fileName:file.name, rowCount:rows.length, addedCount:added, skippedCount:skipped, uploadedAt:new Date().toISOString()}]);
       await idbPut({key, rows:merged, fileName:file.name, batches, updatedAt:new Date().toISOString()});
-      showToast('"'+def.title+'": +'+fmtInt(added)+' filas nuevas'+(skipped?(' ('+fmtInt(skipped)+' ya existían, se omitieron)'):'')+'. Total acumulado: '+fmtInt(merged.length)+' filas.');
+      showToast('"'+def.title+'": +'+fmtInt(added)+' filas nuevas'+(skipped?(' ('+fmtInt(skipped)+' ya existían, se omitieron)'):'')+(reparadas?(' · '+fmtInt(reparadas)+' filas actualizadas con Estado/Usuario'):'')+'. Total acumulado: '+fmtInt(merged.length)+' filas.');
     }else{
       await idbPut({key, rows, fileName:file.name, updatedAt:new Date().toISOString()});
       showToast('"'+def.title+'" cargado: '+fmtInt(rows.length)+' filas.');
@@ -2642,12 +2697,46 @@ function renderAllTablesFromCache(){
 /* =========================================================================
    10b. Indicador por Dispensas Inactivas (Estado = INACTIVO)
    ========================================================================= */
+// Un estado cuenta como inactivo si empieza por INACTIV (INACTIVO, INACTIVA,
+// INACTIVOS, "INACTIVO POR ..."), así toleramos variaciones del archivo original.
+function esEstadoInactivo(v){
+  const s=normValue(v);
+  return s.startsWith('INACTIV') || s==='I' || s==='0';
+}
 function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
-  const rows = rowsAll.filter(r=>{
+  const ambito = rowsAll.filter(r=>{
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
     if(zona && r.zona!==zona) return false;
-    return r.estadoDispensa==='INACTIVO';
+    return true;
   });
+  const rows = ambito.filter(r=>esEstadoInactivo(r.estadoDispensa));
+
+  // Diagnóstico: si el acumulado guardado no trae la columna Estado, el indicador
+  // saldría en 0 sin explicación. Avisamos al usuario qué hacer.
+  const sinEstado = ambito.filter(r=>!normValue(r.estadoDispensa)).length;
+  const estadosVistos=new Map();
+  ambito.forEach(r=>{ const s=normValue(r.estadoDispensa); if(!s) return; estadosVistos.set(s,(estadosVistos.get(s)||0)+1); });
+  const diagEl=document.getElementById('inactivasDiag');
+  if(diagEl){
+    if(!ambito.length){
+      diagEl.style.display='none'; diagEl.innerHTML='';
+    } else if(sinEstado===ambito.length){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Atención:</b> ninguna de las '+fmtInt(ambito.length)+' líneas cargadas trae valor en la columna <b>Estado</b>. '+
+        'Esto ocurre cuando el acumulado se guardó antes de incluir esa columna. Ve a la pestaña de carga, usa <b>Borrar acumulado</b> del Reporte de Dispensación y vuelve a sincronizar el archivo desde Drive.';
+    } else if(sinEstado>0){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Nota:</b> '+fmtInt(sinEstado)+' de '+fmtInt(ambito.length)+' líneas no traen valor en <b>Estado</b> y no se pueden clasificar. '+
+        'Si el número es alto, vuelve a sincronizar el Reporte de Dispensación desde Drive para completar esos datos.';
+    } else if(!rows.length && estadosVistos.size){
+      const lista=[...estadosVistos.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6)
+        .map(e=>escHtml(e[0])+' ('+fmtInt(e[1])+')').join(', ');
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Nota:</b> no se encontraron dispensas INACTIVAS. Estados presentes en los datos filtrados: '+lista+'.';
+    } else {
+      diagEl.style.display='none'; diagEl.innerHTML='';
+    }
+  }
 
   // Una dispensa = Documento + Bodega (misma definición usada en el resto del tablero)
   const dispMap=new Map();
@@ -2849,6 +2938,15 @@ function renderIndicadorDispensa(rowsAll, bodegaSearch, zona){
       lineas, lineasEntregadas:lineasEnt, lineasPendientes:lineasPen,
       efDispensa: dispensas? ent/dispensas: null, pendDispensa: dispensas? 1-ent/dispensas: null
     };
+  });
+  // Orden: de mayor a menor Índice de Pendientes (las bodegas más críticas primero).
+  // Desempate: más dispensas pendientes primero y luego orden alfabético, para que
+  // el listado sea estable entre cargues.
+  table.sort((a,b)=>{
+    const d=(b.pendDispensa||0)-(a.pendDispensa||0);
+    if(Math.abs(d)>1e-12) return d;
+    if((b.dispensasPendientes||0)!==(a.dispensasPendientes||0)) return (b.dispensasPendientes||0)-(a.dispensasPendientes||0);
+    return (a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es');
   });
   lastTables.dispensa=table;
 
@@ -3074,8 +3172,16 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
       cantPuntoPareto, cantBodegaPareto, efPuntoPareto, efBodegaPareto, efFinalPareto, pctComprasPareto,
       cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto };
   });
+  // Orden: de mayor a menor Eficiencia Final Pareto (columna "Efic. final" del bloque
+  // Eficiencia Pareto (cantidad)). Desempate: más moléculas Pareto pendientes primero
+  // y luego orden alfabético, para que el listado sea estable.
+  table.sort((a,b)=>{
+    const d=(b.efFinalPareto||0)-(a.efFinalPareto||0);
+    if(Math.abs(d)>1e-12) return d;
+    if((b.molParetoPend||0)!==(a.molParetoPend||0)) return (b.molParetoPend||0)-(a.molParetoPend||0);
+    return (a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es');
+  });
   lastTables.linea=table;
-  table.sort((a,b)=>(b.efFinalPareto||0)-(a.efFinalPareto||0));
 
   const tbody=document.querySelector('#tblLinea tbody');
   let bodyHtml = table.map(t=>`
