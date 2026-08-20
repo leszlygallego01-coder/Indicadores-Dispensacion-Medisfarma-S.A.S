@@ -392,6 +392,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <button class="active" data-sub="dispensa">Indicador de dispensa</button>
         <button data-sub="linea">Indicador por línea (subsanar)</button>
         <button data-sub="soporte">Indicador soporte evento</button>
+        <button data-sub="inactivas">Indicador por Dispensas Inactivas</button>
       </div>
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
@@ -404,7 +405,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <!-- ---- Seguimiento de Dispensación agrupada por Bodega ---- -->
         <div class="seguimiento-section" id="seguimientoSection">
           <h3>📋 Seguimiento de Dispensación por Bodega</h3>
-          <p class="seg-desc">Muestra entregadas vs pendientes por bodega para cada corte del periodo, con base en los datos de Avances cargados.</p>
+          <p class="seg-desc">Muestra entregadas vs pendientes por bodega para cada corte del periodo, con base en los datos de Avances cargados. <b>Orden:</b> las bodegas se listan por Índice de Pendientes de mayor a menor (las más críticas primero).</p>
           <div class="seg-no-avances" id="segNoAvances"><b>Aún no se han cargado datos de Avances.</b> Carga el archivo de Avances en la pestaña "Cargue de datos" para habilitar este reporte.</div>
           <div id="segContent" style="display:none;">
             <div class="seguimiento-corte-sel">
@@ -472,6 +473,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <div style="margin-bottom:16px;">
           <button class="btn btn-export" id="btnDescargarParetoExistencias">Descargar Pareto y No pareto existencias</button>
           <button class="btn btn-export" id="btnDescargarCodigosComprar" style="background:var(--clay,#B23A34);box-shadow:0 2px 0 #7A2019;">⬇ Descargar Códigos a Comprar (Excel)</button>
+          <button class="btn btn-export" id="btnDescargarSinHomologar" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar Sin Homologar (Excel)</button>
           <button class="btn btn-ghost" data-open-periodico="linea">📊 Reporte Comparativo Periódico</button>
         </div>
 
@@ -514,11 +516,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
 
         <div class="table-wrap">
+          <p class="seg-desc" style="margin-bottom:8px;"><b>Orden:</b> bodegas ordenadas por Eficiencia Final Pareto de mayor a menor. La columna <b>Sin Homologar</b> cuenta las líneas pendientes cuyo código no tiene clasificación PARETO / NO PARETO en el catálogo Homólogo.</p>
           <table class="data" id="tblLinea">
             <thead>
               <tr>
                 <th rowspan="2">Zona</th><th rowspan="2">Bodega</th>
-                <th colspan="3">Líneas</th>
+                <th colspan="4">Líneas</th>
                 <th colspan="2">Pareto</th>
                 <th colspan="2">No pareto</th>
                 <th colspan="2">Cierre (agotados)</th>
@@ -527,6 +530,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               </tr>
               <tr class="sub">
                 <th>Total</th><th>Entregadas</th><th>Pendientes</th>
+                <th>Sin Homologar</th>
                 <th>Moléculas</th><th>Agotadas</th>
                 <th>Moléculas</th><th>Agotadas</th>
                 <th>Líneas agot.</th><th>% cierre</th>
@@ -567,6 +571,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <div class="legend" id="pieSoporteLegend"></div>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
+          <p class="seg-desc" style="margin-bottom:8px;"><b>Orden:</b> bodegas ordenadas por % con soporte de menor a mayor (las de peor cumplimiento primero).</p>
           <table class="data" id="tblSoporte">
             <thead>
               <tr>
@@ -579,6 +584,44 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             </thead>
             <tbody></tbody>
           </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- SUBVISTA: DISPENSAS INACTIVAS ---- -->
+      <div class="subview" id="sub-inactivas">
+        <div class="helpbox">Este indicador toma únicamente las dispensas cuyo <b>Estado</b> es <b>INACTIVO</b> en el Reporte de Dispensación. Se cuentan dispensas únicas (Documento) y se respetan los filtros activos de la pantalla.</div>
+        <div class="stat-row" id="statsInactivas"></div>
+
+        <div class="seguimiento-section">
+          <h3>👤 Dispensas inactivas por Usuario Creación</h3>
+          <p class="seg-desc">Cantidad de dispensas inactivas por usuario, con el rango de fechas (primera y última dispensa inactiva registrada). Ordenado de mayor a menor cantidad.</p>
+          <div class="table-wrap" style="max-height:460px;">
+            <table class="data" id="tblInactivasUsuario">
+              <thead>
+                <tr>
+                  <th>Usuario Creación</th><th>Dispensas inactivas</th><th>% del total</th>
+                  <th>Fecha inicial</th><th>Fecha final</th><th>Rango de fechas</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="seguimiento-section">
+          <h3>🏥 Dispensas inactivas por Bodega Detalle</h3>
+          <p class="seg-desc">Cantidad de dispensas inactivas por bodega, ordenada de mayor a menor.</p>
+          <div class="table-wrap" style="max-height:460px;">
+            <table class="data" id="tblInactivasBodega">
+              <thead>
+                <tr>
+                  <th>Zona</th><th>Bodega Detalle</th><th>Dispensas inactivas</th><th>% del total</th>
+                  <th>Fecha inicial</th><th>Fecha final</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -662,9 +705,11 @@ const DATASETS = [
   {
     key: 'reporte', tabla: 'Tabla_1', title: 'Reporte de Dispensación', required: true, accumulate: true,
     desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente. Esta tarjeta ya NO acepta cargue manual: sus datos provienen exclusivamente de la carpeta de Google Drive.',
-    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte'],
+    cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte','Estado','Usuario Creación'],
     fields: {
       documento: ['DOCUMENTO'],
+      estadoDispensa: ['ESTADO','ESTADO DISPENSA','ESTADO DE LA DISPENSA','ESTADO DE DISPENSA'],
+      usuarioCreacion: ['USUARIO CREACION','USUARIO CREACIÓN','USUARIO DE CREACION','USUARIO DE CREACIÓN','USUARIO CREADOR','USUARIO'],
       fechaDispensacion: ['FECHA DE DISPENSACION','FECHA DISPENSACION','FECHA DISPENSACIÓN'],
       eps: ['EPS'],
       contrato: ['CONTRATO'],
@@ -2272,8 +2317,11 @@ async function calcularIndicadores(){
       const eps=corregirEps(r.eps);
       const epsGrupo=epsAGrupo(eps);
       const fecha=toDateSafe(r.fechaDispensacion);
+      const estadoDispensa=normValue(r.estadoDispensa);
+      const usuarioCreacion=String(r.usuarioCreacion||'').trim();
       return {
         idx, documento, fecha, eps, epsGrupo, contrato, codigoArticulo, homologo, moleculaPareto, descripcionDci, estado,
+        estadoDispensa, usuarioCreacion,
         unidades, cantidadAutorizada, diferencia, lineaPendiente, bodegaDetalle, bodegaNorm,
         zona: bodegaToZona.get(bodegaNorm) || 'N/D',
         existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes
@@ -2581,6 +2629,98 @@ function renderAllTablesFromCache(){
   renderIndicadorSoporteEvento(filteredRowsCache.filter(r=>r.contrato==='EVENTO'), bodegaSearch, zona);
   renderComparativos(filteredRowsCache);
   renderSeguimientoBodega(filteredRowsCache, bodegaSearch, zona);
+  renderIndicadorInactivas(filteredRowsCache, bodegaSearch, zona);
+}
+
+/* =========================================================================
+   10b. Indicador por Dispensas Inactivas (Estado = INACTIVO)
+   ========================================================================= */
+function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
+  const rows = rowsAll.filter(r=>{
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
+    if(zona && r.zona!==zona) return false;
+    return r.estadoDispensa==='INACTIVO';
+  });
+
+  // Una dispensa = Documento + Bodega (misma definición usada en el resto del tablero)
+  const dispMap=new Map();
+  rows.forEach(r=>{
+    const k=r.dispensaYPunto;
+    if(dispMap.has(k)) {
+      const d=dispMap.get(k);
+      if(r.fecha && (!d.fecha || r.fecha<d.fecha)) d.fecha=r.fecha;
+      d.lineas++;
+      return;
+    }
+    dispMap.set(k, {usuario: r.usuarioCreacion || 'SIN USUARIO', bodega: r.bodegaDetalle, zona: r.zona, fecha: r.fecha||null, lineas:1});
+  });
+  const disp=[...dispMap.values()];
+  const total=disp.length;
+  const totalDispensasGlobal=new Set(rowsAll.map(r=>r.dispensaYPunto)).size;
+  const usuariosDistintos=new Set(disp.map(d=>d.usuario)).size;
+  const bodegasDistintas=new Set(disp.map(d=>d.bodega)).size;
+  const fechasAll=disp.map(d=>d.fecha).filter(Boolean).sort((a,b)=>a-b);
+
+  document.getElementById('statsInactivas').innerHTML =
+    '<div class="stat warn"><div class="label">Dispensas inactivas</div><div class="value">'+fmtInt(total)+'</div>'+
+    '<div class="sub">'+fmtPct(totalDispensasGlobal?total/totalDispensasGlobal:null)+' del total de dispensas</div></div>'+
+    '<div class="stat"><div class="label">Líneas involucradas</div><div class="value">'+fmtInt(rows.length)+'</div></div>'+
+    '<div class="stat"><div class="label">Usuarios de creación</div><div class="value">'+fmtInt(usuariosDistintos)+'</div></div>'+
+    '<div class="stat"><div class="label">Bodegas involucradas</div><div class="value">'+fmtInt(bodegasDistintas)+'</div></div>'+
+    '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
+      (fechasAll.length ? escHtml(dateToISO(fechasAll[0])+' → '+dateToISO(fechasAll[fechasAll.length-1])) : '—')+'</div></div>';
+
+  // ---- Por Usuario Creación ----
+  const porUsuario=new Map();
+  disp.forEach(d=>{
+    if(!porUsuario.has(d.usuario)) porUsuario.set(d.usuario, {usuario:d.usuario, cant:0, min:null, max:null});
+    const u=porUsuario.get(d.usuario);
+    u.cant++;
+    if(d.fecha){ if(!u.min||d.fecha<u.min) u.min=d.fecha; if(!u.max||d.fecha>u.max) u.max=d.fecha; }
+  });
+  const listaU=[...porUsuario.values()].sort((a,b)=>b.cant-a.cant);
+  const tbU=document.querySelector('#tblInactivasUsuario tbody');
+  if(!listaU.length){
+    tbU.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
+  }else{
+    let h=listaU.map(u=>{
+      const dias = (u.min&&u.max) ? Math.round((u.max-u.min)/86400000)+1 : null;
+      const rango = (u.min&&u.max) ? (dateToISO(u.min)===dateToISO(u.max) ? '1 día' : fmtInt(dias)+' días') : '—';
+      return '<tr><td class="txt">'+escHtml(u.usuario)+'</td><td>'+fmtInt(u.cant)+'</td>'+
+        '<td>'+fmtPct(total?u.cant/total:null)+'</td>'+
+        '<td class="txt">'+escHtml(u.min?dateToISO(u.min):'—')+'</td>'+
+        '<td class="txt">'+escHtml(u.max?dateToISO(u.max):'—')+'</td>'+
+        '<td class="txt">'+rango+'</td></tr>';
+    }).join('');
+    h+='<tr class="total-row"><td class="txt">TOTAL ('+listaU.length+' usuarios)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
+      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[0]):'—')+'</td>'+
+      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[fechasAll.length-1]):'—')+'</td><td class="txt">—</td></tr>';
+    tbU.innerHTML=h;
+  }
+
+  // ---- Por Bodega Detalle (mayor a menor) ----
+  const porBodega=new Map();
+  disp.forEach(d=>{
+    const k=d.bodega||'N/D';
+    if(!porBodega.has(k)) porBodega.set(k, {bodega:k, zona:d.zona||'N/D', cant:0, min:null, max:null});
+    const b=porBodega.get(k);
+    b.cant++;
+    if(d.fecha){ if(!b.min||d.fecha<b.min) b.min=d.fecha; if(!b.max||d.fecha>b.max) b.max=d.fecha; }
+  });
+  const listaB=[...porBodega.values()].sort((a,b)=>b.cant-a.cant);
+  const tbB=document.querySelector('#tblInactivasBodega tbody');
+  if(!listaB.length){
+    tbB.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas con Estado INACTIVO para el filtro seleccionado.</td></tr>';
+  }else{
+    let h=listaB.map(b=>'<tr><td class="txt">'+escHtml(b.zona)+'</td><td class="txt">'+escHtml(b.bodega)+'</td>'+
+      '<td>'+fmtInt(b.cant)+'</td><td>'+fmtPct(total?b.cant/total:null)+'</td>'+
+      '<td class="txt">'+escHtml(b.min?dateToISO(b.min):'—')+'</td>'+
+      '<td class="txt">'+escHtml(b.max?dateToISO(b.max):'—')+'</td></tr>').join('');
+    h+='<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL ('+listaB.length+' bodegas)</td><td>'+fmtInt(total)+'</td><td>'+fmtPct(total?1:null)+'</td>'+
+      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[0]):'—')+'</td>'+
+      '<td class="txt">'+(fechasAll.length?dateToISO(fechasAll[fechasAll.length-1]):'—')+'</td></tr>';
+    tbB.innerHTML=h;
+  }
 }
 
 // ---- Comparativo ANTES (inicial) vs ACTUALIZADO (con Avances cargados) ----
@@ -2900,7 +3040,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
   const groups=groupByBodega(rowsAll, bodegaSearch, zona);
   const table=groups.map(g=>{
     const rs=g.rows;
-    let lineas=0, lineasEnt=0, lineasPen=0;
+    let lineas=0, lineasEnt=0, lineasPen=0, sinHomologar=0;
     let molParetoPend=0, paretoAgotado=0, molNoParetoPend=0, noParetoAgotado=0;
     let cantPuntoPareto=0, cantBodegaPareto=0, cantPuntoNoPareto=0, cantBodegaNoPareto=0;
     rs.forEach(r=>{
@@ -2918,6 +3058,9 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
         if(agotado) noParetoAgotado++;
         if(r.existenciaPunto>0 && r.sePuedeSubsanarPunto==='SI') cantPuntoNoPareto++;
         else if(r.existenciaBodega>0 && r.sePuedeSubsanarPunto==='NO' && r.sePuedeSubsanarBodega==='SI') cantBodegaNoPareto++;
+      }else{
+        // Línea pendiente cuyo código no tiene clasificación Pareto/No Pareto en el catálogo Homólogo
+        sinHomologar++;
       }
     });
     const totalAgotadas=paretoAgotado+noParetoAgotado;
@@ -2930,7 +3073,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
     const efBodegaNoPareto = molNoParetoPend ? cantBodegaNoPareto/molNoParetoPend : null;
     const efFinalNoPareto = (efPuntoNoPareto||0)+(efBodegaNoPareto||0);
     const pctComprasNoPareto = molNoParetoPend ? Math.max(0, 1-efFinalNoPareto) : null;
-    return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen,
+    return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen, sinHomologar,
       molParetoPend, paretoAgotado, molNoParetoPend, noParetoAgotado, totalAgotadas, pctCierre,
       cantPuntoPareto, cantBodegaPareto, efPuntoPareto, efBodegaPareto, efFinalPareto, pctComprasPareto,
       cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto };
@@ -2943,16 +3086,17 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
     <tr>
       <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
       <td>${fmtInt(t.lineas)}</td><td>${fmtInt(t.lineasEnt)}</td><td>${fmtInt(t.lineasPen)}</td>
+      <td>${fmtInt(t.sinHomologar)}</td>
       <td>${fmtInt(t.molParetoPend)}</td><td>${fmtInt(t.paretoAgotado)}</td>
       <td>${fmtInt(t.molNoParetoPend)}</td><td>${fmtInt(t.noParetoAgotado)}</td>
       <td>${fmtInt(t.totalAgotadas)}</td><td class="${pctClass(1-(t.pctCierre||0))}">${fmtPct(t.pctCierre)}</td>
       <td>${fmtInt(t.cantPuntoPareto)}</td><td class="${effClass(t.efPuntoPareto)}">${fmtPct(t.efPuntoPareto)}</td><td>${fmtInt(t.cantBodegaPareto)}</td><td class="${effClass(t.efBodegaPareto)}">${fmtPct(t.efBodegaPareto)}</td><td class="${effClass(t.efFinalPareto)}">${fmtPct(t.efFinalPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasPareto)}</td>
       <td>${fmtInt(t.cantPuntoNoPareto)}</td><td class="${effClass(t.efPuntoNoPareto)}">${fmtPct(t.efPuntoNoPareto)}</td><td>${fmtInt(t.cantBodegaNoPareto)}</td><td class="${effClass(t.efBodegaNoPareto)}">${fmtPct(t.efBodegaNoPareto)}</td><td class="${effClass(t.efFinalNoPareto)}">${fmtPct(t.efFinalNoPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasNoPareto)}</td>
     </tr>`).join('');
-  if(!table.length) bodyHtml='<tr><td colspan="23" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
+  if(!table.length) bodyHtml='<tr><td colspan="24" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
   else{
     const s=(f)=>sumField(table,f);
-    const tLineas=s('lineas'), tEnt=s('lineasEnt'), tPen=s('lineasPen');
+    const tLineas=s('lineas'), tEnt=s('lineasEnt'), tPen=s('lineasPen'), tSinHom=s('sinHomologar');
     const tMolP=s('molParetoPend'), tParAg=s('paretoAgotado'), tMolNP=s('molNoParetoPend'), tNoParAg=s('noParetoAgotado');
     const tAgot=s('totalAgotadas'), tCP=s('cantPuntoPareto'), tCBP=s('cantBodegaPareto'), tCNP=s('cantPuntoNoPareto'), tCBNP=s('cantBodegaNoPareto');
     const tEfPP=tMolP?tCP/tMolP:null, tEfBP=tMolP?tCBP/tMolP:null, tEfFP=(tEfPP||0)+(tEfBP||0);
@@ -2960,6 +3104,7 @@ function renderIndicadorLinea(rowsAll, bodegaSearch, zona){
     const tComprasP = tMolP? Math.max(0,1-tEfFP): null, tComprasNP = tMolNP? Math.max(0,1-tEfFNP): null;
     bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
       <td>${fmtInt(tLineas)}</td><td>${fmtInt(tEnt)}</td><td>${fmtInt(tPen)}</td>
+      <td>${fmtInt(tSinHom)}</td>
       <td>${fmtInt(tMolP)}</td><td>${fmtInt(tParAg)}</td><td>${fmtInt(tMolNP)}</td><td>${fmtInt(tNoParAg)}</td>
       <td>${fmtInt(tAgot)}</td><td>${fmtPct(tPen?tAgot/tPen:null)}</td>
       <td>${fmtInt(tCP)}</td><td class="${effClass(tEfPP)}">${fmtPct(tEfPP)}</td><td>${fmtInt(tCBP)}</td><td class="${effClass(tEfBP)}">${fmtPct(tEfBP)}</td><td class="${effClass(tEfFP)}">${fmtPct(tEfFP)}</td><td class="pct-bad">${fmtPct(tComprasP)}</td>
@@ -3106,7 +3251,7 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
   XLSX.utils.book_append_sheet(wb, wsD, 'INDICADOR DE DISPENSA');
 
   const wsL=XLSX.utils.json_to_sheet(lastTables.linea.map(t=>({
-    'Zona':t.zona,'Bodega':t.bodega,'Lineas':t.lineas,'Lineas Entregadas':t.lineasEnt,'Lineas Pendientes':t.lineasPen,
+    'Zona':t.zona,'Bodega':t.bodega,'Lineas':t.lineas,'Lineas Entregadas':t.lineasEnt,'Lineas Pendientes':t.lineasPen,'Sin Homologar':t.sinHomologar,
     'Moleculas Pareto':t.molParetoPend,'Pareto Agotado':t.paretoAgotado,'Moleculas No Pareto':t.molNoParetoPend,'No Pareto Agotado':t.noParetoAgotado,
     'Total Lineas Agotadas':t.totalAgotadas,'% Cierre de Lineas':t.pctCierre,
     'Cant. en el Punto (Pareto)':t.cantPuntoPareto,'Cant. en Bodega (Pareto)':t.cantBodegaPareto,
@@ -3212,6 +3357,31 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   const fecha=new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, `Codigos_a_Comprar_${fecha}.xlsx`);
   showToast('Excel de Códigos a Comprar exportado: '+fmtInt(aComprar.length)+' líneas.');
+});
+
+// ---- Sin Homologar: líneas pendientes cuyo código no está clasificado como PARETO ni NO PARETO ----
+document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()=>{
+  if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
+  const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
+  const zona = document.getElementById('fZona').value;
+  const sinHom = filteredRowsCache.filter(r=>{
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
+    if(zona && r.zona!==zona) return false;
+    if(r.lineaPendiente!=='SI') return false;
+    return r.moleculaPareto!=='PARETO' && r.moleculaPareto!=='NO PARETO';
+  }).map(r=>({
+    'Código Artículo': r.codigoArticulo,
+    'Descripción DCI': r.descripcionDci,
+    'Bodega Detalle': r.bodegaDetalle,
+    'Documento': r.documento,
+    'Cantidad Pendiente': Math.abs(r.diferencia)
+  }));
+  if(!sinHom.length){ showToast('No hay líneas sin homologar en el filtro actual.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sinHom), 'Sin Homologar');
+  const fecha=new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'Sin_Homologar_'+fecha+'.xlsx');
+  showToast('Excel de Sin Homologar exportado: '+fmtInt(sinHom.length)+' líneas.');
 });
 
 /* =========================================================================
