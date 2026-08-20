@@ -286,7 +286,9 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 .drive-file-item .fdate{font-size:10px;color:#9CA9B6;white-space:nowrap;margin-left:8px;}
 .drive-last-sync{font-size:11px;color:var(--ink-soft);margin-top:6px;font-family:var(--mono);}
 .drive-last-sync b{color:var(--ink);}
+.card.drive-reporte{border-color:var(--blue);}
 .card.drive-only{border-color:var(--blue);}
+.card.drive-reporte::before,
 .card.drive-only::before{content:"SOLO DRIVE"!important;position:absolute;top:0;right:0;font-family:var(--mono);font-size:9px;letter-spacing:.06em;background:var(--blue);color:#fff;padding:3px 8px;border-radius:0 0 0 8px;}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
@@ -653,7 +655,7 @@ function corregirEps(epsRaw){
 const DATASETS = [
   {
     key: 'reporte', tabla: 'Tabla_1', title: 'Reporte de Dispensación', required: true, accumulate: true,
-    desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente.',
+    desc: 'Base transaccional principal. Cargue diario: cada archivo que subas se ACUMULA con lo ya guardado (no lo reemplaza); las filas repetidas se descartan automáticamente. Esta tarjeta ya NO acepta cargue manual: sus datos provienen exclusivamente de la carpeta de Google Drive.',
     cols: ['Documento','Fecha de Dispensación','EPS','Contrato','Código de Articulo','Descripción','Unidades','Cantidad Autorizada','Diferencia','Bodega Detalle','Soporte'],
     fields: {
       documento: ['DOCUMENTO'],
@@ -851,6 +853,11 @@ async function idbDelete(key) {
     return;
   }
 
+  if (key === 'reporte') {
+    try { localStorage.removeItem('reporte_drive_files'); } catch(e) {}
+    _driveFilesReporte = [];
+  }
+
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -867,7 +874,9 @@ async function idbClearAll() {
   memoryStore.delete('inventario');
   try { localStorage.removeItem('inventario_data'); } catch(e) {}
   try { localStorage.removeItem('inventario_drive_files'); } catch(e) {}
+  try { localStorage.removeItem('reporte_drive_files'); } catch(e) {}
   _driveFiles = [];
+  _driveFilesReporte = [];
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1087,9 +1096,12 @@ function updateCalcButton(){
 /* =========================================================================
    Google Drive Sync — Inventario del Punto
    ========================================================================= */
-const DRIVE_FOLDER_ID = '1eHRKlKXViXc5F_2yNPIXFCYsd-V26EpU';
+const DRIVE_FOLDER_ID = '1eHRKlKXViXc5F_2yNPIXFCYsd-V26EpU';            // Inventario General
+const DRIVE_FOLDER_REPORTE = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';       // Reportes de Dispensación
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 let _driveSyncing = false;
+let _driveSyncingReporte = false;
+let _driveFilesReporte = [];
 let _driveFiles = []; // archivos listados del folder de Drive
 
 function inventarioCardHTML(d, loaded) {
@@ -1153,7 +1165,68 @@ function inventarioCardHTML(d, loaded) {
   return html;
 }
 
-/* --- Google Identity Services (GIS) + gapi for Drive --- */
+/* ---------- Tarjeta "Reporte de Dispensación": solo Google Drive (acumulativo) ---------- */
+function reporteCardHTML(d, loaded) {
+  const syncing = _driveSyncingReporte;
+  const nBatches = loaded && loaded.batches ? loaded.batches.length : (loaded ? 1 : 0);
+  let html = '';
+
+  html += '<h3>' + d.title + ' <span class="acumulativo-tag">· acumulativo</span> <span class="drive-badge">☁️ solo Google Drive</span></h3>';
+  html += '<p class="desc">' + d.desc + '</p>';
+  html += '<div class="cols">' + d.cols.join(' · ') + '</div>';
+
+  html += '<div class="drive-folder-info">📂 Carpeta Drive: <code>Reportes de Dispensación</code><br>ID: <code>' + DRIVE_FOLDER_REPORTE + '</code></div>';
+
+  html += '<button class="drive-sync-btn" id="btnDriveSyncReporte" onclick="syncReporteFromDrive()"' + (syncing ? ' disabled' : '') + '>';
+  html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Reportes de Dispensación" (Drive)';
+  html += '</button>';
+
+  html += '<div class="status-row">';
+  if (loaded) {
+    html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas' + (nBatches > 1 ? ' · ' + nBatches + ' cargues' : '') + '</span>';
+    html += '<button class="clear" data-key="' + d.key + '">Borrar acumulado</button>';
+  } else {
+    html += '<span class="empty">Sin cargar</span><span></span>';
+  }
+  html += '</div>';
+
+  if (loaded && loaded.fileName) {
+    html += '<div class="filename">Último archivo: ' + loaded.fileName + '</div>';
+  }
+
+  if (loaded && loaded.batches && loaded.batches.length) {
+    const last = loaded.batches.slice(-3);
+    const parts = [];
+    for (let i = last.length - 1; i >= 0; i--) {
+      const b = last[i];
+      const n = (b.addedCount !== undefined ? b.addedCount : b.rowCount);
+      parts.push(b.fileName + ' (+' + fmtInt(n) + ')');
+    }
+    html += '<div class="filename" style="margin-top:4px;">' + parts.join(' · ') + (loaded.batches.length > 3 ? ' · …' : '') + '</div>';
+  }
+
+  if (_driveFilesReporte.length > 0) {
+    html += '<div class="drive-file-list">';
+    for (let i = 0; i < _driveFilesReporte.length; i++) {
+      const f = _driveFilesReporte[i];
+      html += '<div class="drive-file-item">';
+      html += '<span class="fname">📄 ' + f.name + '</span>';
+      if (f.modifiedTime) {
+        const dt = new Date(f.modifiedTime);
+        html += '<span class="fdate">' + dt.toLocaleDateString('es') + ' ' + dt.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  if (loaded && loaded.updatedAt) {
+    const sd = new Date(loaded.updatedAt);
+    html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b> · ' + fmtInt(loaded.rowCount) + ' filas acumuladas.</div>';
+  }
+
+  return html;
+}
 
 /* --- Firebase Auth Google Sign-In (primary) for Drive access --- */
 
@@ -1226,7 +1299,7 @@ async function syncInventarioFromDrive() {
     const accessToken = await authenticateDrive();
 
     // Step 2: List files in the Drive folder
-    const files = await listDriveFiles(accessToken);
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_ID);
     if (!files || !files.length) {
       throw new Error('NO_FILES');
     }
@@ -1294,9 +1367,111 @@ async function syncInventarioFromDrive() {
   }
 }
 
-async function listDriveFiles(accessToken) {
-  const q = "'" + DRIVE_FOLDER_ID + "' in parents and (mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='application/vnd.ms-excel' or mimeType='text/csv')";
-  const url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=10';
+/* ---------- Sincronización Drive del Reporte de Dispensación (ACUMULATIVA) ----------
+   Lee TODOS los archivos de la carpeta y los acumula con deduplicación,
+   igual que el cargue manual diario. Persiste por el camino normal (Firestore/idbPut). */
+async function syncReporteFromDrive() {
+  if (_driveSyncingReporte) return;
+  _driveSyncingReporte = true;
+  renderUploadCards();
+
+  const KEY = 'reporte';
+  const def = DATASETS.find(d => d.key === KEY);
+
+  try {
+    const accessToken = await authenticateDrive();
+
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_REPORTE);
+    if (!files || !files.length) throw new Error('NO_FILES');
+
+    _driveFilesReporte = files.map(f => ({ name: f.name, modifiedTime: f.modifiedTime }));
+    try { localStorage.setItem('reporte_drive_files', JSON.stringify(_driveFilesReporte)); } catch(e) {}
+
+    // Procesar del más antiguo al más reciente para que el historial de cargues quede en orden
+    const ordered = files.slice().sort((a, b) => String(a.modifiedTime || '').localeCompare(String(b.modifiedTime || '')));
+
+    const existing = await idbGet(KEY);
+    const prevRows = existing ? existing.rows : [];
+    const prevBatches = existing && existing.batches
+      ? existing.batches
+      : (existing ? [{ fileName: existing.fileName, rowCount: prevRows.length, addedCount: prevRows.length, uploadedAt: existing.updatedAt }] : []);
+
+    const seen = new Set(prevRows.map(r => dedupKeyFor(KEY, r)));
+    const merged = prevRows.slice();
+    const batches = prevBatches.slice();
+
+    let totalAdded = 0, totalSkipped = 0, lastFileName = '';
+
+    for (let i = 0; i < ordered.length; i++) {
+      const f = ordered[i];
+      showToast('Leyendo desde Drive: ' + f.name + '…');
+      let rows;
+      try {
+        const buf = await downloadDriveFile(accessToken, f.id, f.mimeType);
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true, dense: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+        if (!aoa.length) continue;
+        rows = parseRowsFromAOA(aoa, def);
+      } catch (fileErr) {
+        console.warn('No se pudo leer ' + f.name + ':', fileErr);
+        continue;
+      }
+      if (!rows || !rows.length) continue;
+
+      let added = 0, skipped = 0;
+      for (let j = 0; j < rows.length; j++) {
+        const k = dedupKeyFor(KEY, rows[j]);
+        if (seen.has(k)) { skipped++; continue; }
+        seen.add(k); merged.push(rows[j]); added++;
+      }
+      totalAdded += added; totalSkipped += skipped;
+      lastFileName = f.name;
+
+      // Solo registramos un "cargue" si aportó filas nuevas
+      if (added > 0) {
+        batches.push({ fileName: f.name, rowCount: rows.length, addedCount: added, skippedCount: skipped, uploadedAt: new Date().toISOString() });
+      }
+    }
+
+    if (!merged.length) {
+      showToast('No se encontraron filas de datos en los archivos de Drive.', true);
+      return;
+    }
+
+    await idbPut({ key: KEY, rows: merged, fileName: lastFileName || (existing && existing.fileName) || '', batches, updatedAt: new Date().toISOString() });
+
+    showToast('"' + def.title + '" sincronizado desde Drive: +' + fmtInt(totalAdded) + ' filas nuevas'
+      + (totalSkipped ? (' (' + fmtInt(totalSkipped) + ' ya existían, se omitieron)') : '')
+      + '. Total acumulado: ' + fmtInt(merged.length) + ' filas.');
+
+    await refreshStatusFromDB();
+  } catch (err) {
+    console.error('Drive sync error (reporte):', err);
+    let msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
+    if (err.message === 'NO_FILES' || err.message === 'NO_PERMISSION') {
+      msg = 'No tienes permiso de lectura sobre la carpeta de Google Drive o la carpeta está vacía.';
+    } else if (err.message === 'Ventana de inicio de sesión cerrada por el usuario.'
+            || err.message === 'Solicitud de inicio de sesión cancelada.') {
+      msg = err.message;
+    } else if (err.message === 'No access token in Firebase credential') {
+      msg = 'Error de autenticación: no se obtuvo token de acceso. Intenta de nuevo.';
+    } else if (err.code === 'auth/unauthorized-domain') {
+      msg = 'Este dominio no está autorizado para inicio de sesión con Google. Contacta al administrador.';
+    } else if (err.code === 'auth/network-request-failed') {
+      msg = 'Error de red al autenticar. Verifica tu conexión e intenta de nuevo.';
+    }
+    showToast(msg, true);
+  } finally {
+    _driveSyncingReporte = false;
+    renderUploadCards();
+  }
+}
+
+async function listDriveFiles(accessToken, folderId) {
+  const fid = folderId || DRIVE_FOLDER_ID;
+  const q = "'" + fid + "' in parents and trashed=false and (mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='application/vnd.ms-excel' or mimeType='text/csv' or mimeType='application/vnd.google-apps.spreadsheet')";
+  const url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=100';
   const resp = await fetch(url, {
     headers: { 'Authorization': 'Bearer ' + accessToken }
   });
@@ -1357,6 +1532,10 @@ function loadInventarioFromLocalStorage() {
     if (storedFiles) {
       try { _driveFiles = JSON.parse(storedFiles); } catch(e) { _driveFiles = []; }
     }
+    const storedFilesRep = localStorage.getItem('reporte_drive_files');
+    if (storedFilesRep) {
+      try { _driveFilesReporte = JSON.parse(storedFilesRep); } catch(e) { _driveFilesReporte = []; }
+    }
   } catch(e) { /* ignore */ }
 }
 
@@ -1370,6 +1549,9 @@ function renderUploadCards(){
     if(d.key === 'inventario') {
       card.className = 'card drive-only required' + (loaded ? ' loaded' : '');
       card.innerHTML = inventarioCardHTML(d, loaded);
+    } else if(d.key === 'reporte') {
+      card.className = 'card drive-reporte required' + (loaded ? ' loaded' : '');
+      card.innerHTML = reporteCardHTML(d, loaded);
     } else {
       card.innerHTML = `<h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
       <p class="desc">${d.desc}</p>
