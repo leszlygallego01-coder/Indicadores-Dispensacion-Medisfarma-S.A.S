@@ -2325,8 +2325,17 @@ async function calcularIndicadores(){
     const epsGrupos=Array.from(new Set(rows.map(r=>r.epsGrupo).filter(Boolean))).sort();
     const zonas=Array.from(new Set(rows.map(r=>r.zona).filter(Boolean))).sort();
     const fechas=rows.map(r=>r.fecha).filter(Boolean);
-    const minFecha=fechas.length ? new Date(Math.min(...fechas)) : null;
-    const maxFecha=fechas.length ? new Date(Math.max(...fechas)) : null;
+    // Se recorre con un bucle en vez de Math.min(...fechas): con cientos de miles de filas
+    // acumuladas el operador de propagacion desborda la pila ("Maximum call stack size exceeded").
+    let minTs=null, maxTs=null;
+    for(let i=0;i<fechas.length;i++){
+      const t=fechas[i] instanceof Date ? fechas[i].getTime() : new Date(fechas[i]).getTime();
+      if(!isFinite(t)) continue;
+      if(minTs===null||t<minTs) minTs=t;
+      if(maxTs===null||t>maxTs) maxTs=t;
+    }
+    const minFecha = minTs===null ? null : new Date(minTs);
+    const maxFecha = maxTs===null ? null : new Date(maxTs);
 
     // ---- Diagnóstico del cruce con Homólogo (para detectar de inmediato si el problema
     //      es de encabezados o de valores, en vez de mostrar 0 en silencio) ----
