@@ -273,6 +273,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 /* Drive Sync Button */
 .drive-sync-btn{background:var(--blue);color:white;border:none;border-radius:8px;padding:12px 20px;cursor:pointer;font-size:14px;width:100%;transition:background .2s,opacity .2s;font-family:var(--body);font-weight:600;}
 .drive-error{margin-top:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}
+.drive-config-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.drive-config-btn{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer;font-family:var(--body);font-weight:600;transition:background .2s,border-color .2s;}
+.drive-config-btn:hover{background:#fff;border-color:var(--blue);color:var(--blue-deep);}
+.drive-config-id{font-size:11px;color:var(--ink-soft);}
+.drive-config-id code{font-size:11px;word-break:break-all;}
+.drive-config-id.sin-id{color:#b45309;}
 .drive-sync-btn:hover{background:var(--blue-deep);}
 .drive-sync-btn:disabled{opacity:0.6;cursor:wait;}
 .spinner-inline{display:inline-block;width:18px;height:18px;border:2px solid #fff3;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px;}
@@ -1197,6 +1203,20 @@ let _driveSyncingReporte = false;
 let _driveFilesReporte = [];
 let _driveFiles = []; // archivos listados del folder de Drive
 
+/* Fila de configuracion del acceso a Google (boton + ID actual acortado) */
+function driveConfigRowHTML() {
+  const id = getDriveClientId();
+  let html = '<div class="drive-config-row">';
+  html += '<button class="drive-config-btn" type="button" onclick="configureDriveClientId()">⚙ Configurar acceso a Google</button>';
+  if (id) {
+    html += '<span class="drive-config-id" title="ID de cliente OAuth guardado en este navegador">ID: <code>' + escapeHtmlTxt(shortDriveClientId(id)) + '</code></span>';
+  } else {
+    html += '<span class="drive-config-id sin-id">Sin ID de cliente configurado</span>';
+  }
+  html += '</div>';
+  return html;
+}
+
 function inventarioCardHTML(d, loaded) {
   const syncing = _driveSyncing;
   let html = '';
@@ -1217,6 +1237,9 @@ function inventarioCardHTML(d, loaded) {
   html += '<button class="drive-sync-btn" id="btnDriveSyncInventario" onclick="syncInventarioFromDrive()"' + (syncing ? ' disabled' : '') + '>';
   html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta';
   html += '</button>';
+
+  // Configuracion del ID de cliente OAuth
+  html += driveConfigRowHTML();
 
   if (_driveErrorInventario) {
     html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorInventario) + '</div>';
@@ -1278,6 +1301,8 @@ function reporteCardHTML(d, loaded) {
   html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Reportes de Dispensación" (Drive)';
   html += '</button>';
 
+  html += driveConfigRowHTML();
+
   if (_driveErrorReporte) {
     html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorReporte) + '</div>';
   }
@@ -1334,6 +1359,7 @@ function reporteCardHTML(d, loaded) {
 let _driveToken = null;          // token en memoria para no repetir el popup
 let _driveTokenAt = 0;           // marca de tiempo de obtencion
 let _driveTokenClient = null;    // cliente GIS reutilizable
+let _driveTokenClientId = '';    // ID con el que se creo el cliente GIS
 
 /* El ID de cliente OAuth se guarda en el navegador. Se puede fijar aqui
    (DRIVE_CLIENT_ID_DEFAULT) o pedirselo al usuario la primera vez. */
@@ -1348,24 +1374,93 @@ function getDriveClientId() {
   return DRIVE_CLIENT_ID_DEFAULT.trim();
 }
 
+/* Limpia lo que pegue el usuario: espacios, saltos de linea, comillas,
+   y el caso de pegar algo como  "client_id": "123-abc.apps.googleusercontent.com"  */
+function cleanDriveClientId(raw) {
+  let s = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+  s = s.replace(/^["'\s]+|["',;\s]+$/g, '');
+  const m = s.match(/[0-9][0-9A-Za-z._-]*\.apps\.googleusercontent\.com/);
+  if (m) return m[0];
+  return s;
+}
+
+function isValidDriveClientId(id) {
+  return /^[0-9][0-9A-Za-z._-]*\.apps\.googleusercontent\.com$/.test(String(id || '').trim());
+}
+
+/* Version corta para mostrar en la tarjeta sin ocupar toda la linea */
+function shortDriveClientId(id) {
+  const s = String(id || '');
+  if (s.length <= 26) return s;
+  return s.slice(0, 14) + '…' + s.slice(-22);
+}
+
 function setDriveClientId(id) {
-  const clean = String(id || '').trim();
-  try { localStorage.setItem(DRIVE_CLIENT_ID_STORAGE, clean); } catch (e) {}
-  _driveTokenClient = null;
+  const clean = cleanDriveClientId(id);
+  try {
+    if (clean) localStorage.setItem(DRIVE_CLIENT_ID_STORAGE, clean);
+    else localStorage.removeItem(DRIVE_CLIENT_ID_STORAGE);
+  } catch (e) {}
+  _driveTokenClient = null;   // fuerza recrear el cliente con el ID nuevo
   _driveToken = null;
+  _driveTokenAt = 0;
   return clean;
 }
 
+function forgetDriveClientId() {
+  setDriveClientId('');
+}
+
+const DRIVE_CLIENT_ID_HELP =
+  'Pega el ID de cliente OAuth de Google.\n\n'
+  + 'Debe verse asi:  123456789012-abc123def456.apps.googleusercontent.com\n\n'
+  + 'Como obtenerlo (una sola vez):\n'
+  + '1) console.cloud.google.com > selecciona tu proyecto\n'
+  + '2) APIs y servicios > Biblioteca > habilita "Google Drive API"\n'
+  + '3) APIs y servicios > Credenciales > Crear credenciales > ID de cliente de OAuth\n'
+  + '4) Tipo de aplicacion: Aplicacion web\n'
+  + '5) En "Origenes autorizados de JavaScript" agrega exactamente:\n'
+  + '   ';
+
+function driveOriginActual() {
+  try { return window.location.origin || '(origen desconocido)'; } catch (e) { return '(origen desconocido)'; }
+}
+
+/* Pide el ID de cliente y valida el formato antes de guardarlo.
+   Devuelve '' si el usuario cancela. */
 function askDriveClientId() {
   const actual = getDriveClientId();
-  const texto = window.prompt(
-    'Pega el ID de cliente OAuth de Google (termina en .apps.googleusercontent.com).\n'
-    + 'Se crea en Google Cloud > APIs y servicios > Credenciales > ID de cliente OAuth (tipo "Aplicacion web"),\n'
-    + 'agregando este sitio en "Origenes autorizados de JavaScript".',
-    actual
-  );
-  if (texto === null) return '';
-  return setDriveClientId(texto);
+  let sugerencia = actual;
+  for (let intento = 0; intento < 3; intento++) {
+    const texto = window.prompt(DRIVE_CLIENT_ID_HELP + driveOriginActual(), sugerencia);
+    if (texto === null) return '';
+    const limpio = cleanDriveClientId(texto);
+    if (!limpio) {
+      // Campo vacio: se interpreta como "borrar el ID guardado"
+      forgetDriveClientId();
+      return '';
+    }
+    if (isValidDriveClientId(limpio)) return setDriveClientId(limpio);
+    sugerencia = limpio;
+    window.alert('Ese ID no tiene el formato correcto.\n\n'
+      + 'Recibido: ' + limpio + '\n\n'
+      + 'Debe terminar en .apps.googleusercontent.com (no es la clave de API, ni el secreto de cliente, ni el ID del proyecto).');
+  }
+  return '';
+}
+
+/* Boton "engranaje" de las tarjetas: configurar / cambiar el ID de cliente */
+function configureDriveClientId() {
+  const antes = getDriveClientId();
+  const nuevo = askDriveClientId();
+  if (nuevo) {
+    clearDriveError('inventario');
+    clearDriveError('reporte');
+    showToast('ID de cliente OAuth guardado. Ya puedes pulsar "Sincronizar carpeta".');
+  } else if (antes && !getDriveClientId()) {
+    showToast('Se borro el ID de cliente OAuth guardado.');
+  }
+  renderUploadCards();
 }
 
 async function authenticateDrive(forceConsent) {
@@ -1378,38 +1473,66 @@ async function authenticateDrive(forceConsent) {
     throw new Error('GIS_NOT_LOADED');
   }
 
+  // 1) ID de cliente: debe existir y tener formato valido ANTES de abrir el popup.
+  //    Asi evitamos la pantalla "Acceso bloqueado / Error 401: invalid_client".
   let clientId = getDriveClientId();
+  if (clientId && !isValidDriveClientId(clientId)) {
+    // Habia un ID guardado con formato incorrecto: se descarta y se vuelve a pedir
+    forgetDriveClientId();
+    clientId = '';
+  }
   if (!clientId) clientId = askDriveClientId();
   if (!clientId) throw new Error('NO_CLIENT_ID');
+  if (!isValidDriveClientId(clientId)) throw new Error('BAD_CLIENT_ID');
 
-  const token = await new Promise((resolve, reject) => {
-    try {
-      if (!_driveTokenClient) {
-        _driveTokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: DRIVE_SCOPES,
-          callback: (resp) => {
-            if (resp && resp.access_token) { resolve(resp.access_token); return; }
-            const e = new Error(resp && resp.error ? resp.error : 'OAUTH_NO_TOKEN');
-            e.oauthDetail = (resp && (resp.error_description || resp.error)) || '';
-            reject(e);
-          },
-          error_callback: (err) => {
-            const tipo = (err && err.type) || '';
-            if (tipo === 'popup_closed') { reject(new Error('POPUP_CLOSED')); return; }
-            if (tipo === 'popup_failed_to_open') { reject(new Error('POPUP_BLOCKED')); return; }
-            const e = new Error((err && err.message) || 'OAUTH_ERROR');
-            e.oauthDetail = tipo;
-            reject(e);
-          }
-        });
+  // 2) Si el ID cambio respecto al cliente ya creado, hay que recrearlo
+  if (_driveTokenClient && _driveTokenClientId !== clientId) {
+    _driveTokenClient = null;
+  }
+
+  let token;
+  try {
+    token = await new Promise((resolve, reject) => {
+      try {
+        if (!_driveTokenClient) {
+          _driveTokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: DRIVE_SCOPES,
+            callback: (resp) => {
+              if (resp && resp.access_token) { resolve(resp.access_token); return; }
+              const e = new Error(resp && resp.error ? resp.error : 'OAUTH_NO_TOKEN');
+              e.oauthDetail = (resp && (resp.error_description || resp.error)) || '';
+              reject(e);
+            },
+            error_callback: (err) => {
+              const tipo = (err && err.type) || '';
+              if (tipo === 'popup_closed') { reject(new Error('POPUP_CLOSED')); return; }
+              if (tipo === 'popup_failed_to_open') { reject(new Error('POPUP_BLOCKED')); return; }
+              const e = new Error((err && err.message) || 'OAUTH_ERROR');
+              e.oauthDetail = tipo;
+              reject(e);
+            }
+          });
+          _driveTokenClientId = clientId;
+        }
+        // 'consent' asegura que se vuelva a mostrar la casilla de permiso de Drive
+        _driveTokenClient.requestAccessToken({ prompt: forceConsent ? 'consent' : '' });
+      } catch (err) {
+        reject(err);
       }
-      // 'consent' asegura que se vuelva a mostrar la casilla de permiso de Drive
-      _driveTokenClient.requestAccessToken({ prompt: forceConsent ? 'consent' : '' });
-    } catch (err) {
-      reject(err);
+    });
+  } catch (err) {
+    // Google dice que el cliente no existe / no sirve para este sitio:
+    // se olvida el ID guardado para que la proxima vez se pueda pegar el correcto.
+    const texto = ((err && err.message) || '') + ' ' + ((err && err.oauthDetail) || '');
+    if (/invalid_client|client was not found|unauthorized_client|deleted_client|invalid_request/i.test(texto)) {
+      forgetDriveClientId();
+      const e = new Error('INVALID_CLIENT');
+      e.oauthDetail = (err && (err.oauthDetail || err.message)) || '';
+      throw e;
     }
-  });
+    throw err;
+  }
 
   const hasScope = await driveTokenHasDriveScope(token);
   if (hasScope === false) throw new Error('NO_SCOPE');
@@ -1665,15 +1788,25 @@ function driveErrorMessage(err) {
   if (msg === 'GIS_NOT_LOADED')
     return 'No se pudo cargar el servicio de acceso de Google. Revisa la conexion o el bloqueador de anuncios y recarga la pagina.';
   if (msg === 'NO_CLIENT_ID')
-    return 'Falta el ID de cliente OAuth de Google. Pulsa "Sincronizar" de nuevo y pega el ID (termina en .apps.googleusercontent.com) creado en Google Cloud > Credenciales.';
+    return 'Falta el ID de cliente OAuth de Google. Pulsa "⚙ Configurar acceso a Google" en esta tarjeta y pega el ID que termina en .apps.googleusercontent.com (Google Cloud > APIs y servicios > Credenciales).';
+  if (msg === 'BAD_CLIENT_ID')
+    return 'El ID de cliente que pegaste no tiene el formato correcto. Debe terminar en .apps.googleusercontent.com. Pulsa "⚙ Configurar acceso a Google" y pegalo de nuevo (no es la clave de API ni el secreto de cliente).';
+  if (msg === 'INVALID_CLIENT')
+    return 'Google respondio "Acceso bloqueado / Error 401: invalid_client": el ID de cliente OAuth no existe en Google Cloud o no corresponde a este sitio.\n'
+      + 'Que revisar:\n'
+      + '1) Que el ID este creado como tipo "Aplicacion web" y NO haya sido borrado.\n'
+      + '2) Que en "Origenes autorizados de JavaScript" figure exactamente: ' + driveOriginActual() + '\n'
+      + '3) Que la Google Drive API este habilitada en ese mismo proyecto.\n'
+      + 'Ya se borro el ID guardado: pulsa "⚙ Configurar acceso a Google" y pega el correcto.'
+      + (err && err.oauthDetail ? ' [' + err.oauthDetail + ']' : '');
   if (msg === 'POPUP_BLOCKED')
     return 'El navegador bloqueo la ventana de Google. Permite las ventanas emergentes de este sitio e intenta de nuevo.';
   if (msg === 'POPUP_CLOSED')
     return 'Se cerro la ventana de Google antes de terminar. Vuelve a intentarlo y acepta el permiso de lectura de Drive.';
   if (msg === 'access_denied')
     return 'Se rechazo el permiso en la pantalla de Google. Vuelve a sincronizar y acepta "Ver tus archivos de Google Drive".';
-  if (msg === 'idpiframe_initialization_failed' || msg === 'invalid_client' || /client_?id/i.test(msg))
-    return 'El ID de cliente OAuth no es valido para este sitio. Verifica en Google Cloud > Credenciales que este dominio figure en "Origenes autorizados de JavaScript".';
+  if (msg === 'idpiframe_initialization_failed' || msg === 'invalid_client' || msg === 'unauthorized_client' || /client_?id|invalid_client/i.test(msg))
+    return 'El ID de cliente OAuth no es valido para este sitio. Verifica en Google Cloud > Credenciales que este origen figure en "Origenes autorizados de JavaScript": ' + driveOriginActual() + '. Luego pulsa "⚙ Configurar acceso a Google" y pega el ID correcto.';
   if (msg === 'OAUTH_NO_TOKEN' || msg === 'OAUTH_ERROR')
     return 'Google no devolvio un token de acceso. Vuelve a intentarlo y acepta el permiso de lectura de Drive.' + (err && err.oauthDetail ? ' [' + err.oauthDetail + ']' : '');
   if (msg === 'NO_SCOPE')
