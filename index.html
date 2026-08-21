@@ -306,6 +306,8 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
 .corte-card{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--bg);text-align:center;}
 .corte-card h4{font-family:var(--disp);font-size:13px;color:var(--blue-deep);margin:0 0 10px;}
 .corte-card .table-wrap{text-align:left;}
+.corte-card .legend{max-width:250px;margin-left:auto;margin-right:auto;text-align:left;}
+.corte-card svg{display:block;margin:0 auto;}
 #periodicoFilters .field{display:flex;flex-direction:column;gap:4px;}
 #periodicoFilters .field label{font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;}
 #periodicoFilters .field select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;}
@@ -4055,147 +4057,122 @@ function renderReportePeriodico(){
   });
   const metrics = buildCorteMetrics(filtered);
   const cortesLabels={1:'Corte 1 (día 1-10)',2:'Corte 2 (día 11-20)',3:'Corte 3 (día 21-31)'};
-  const labelEnt = periodicoTabActual==='documento' ? 'Entregados' : periodicoTabActual==='linea' ? 'Entregadas' : 'Con soporte';
+  const labelEnt = periodicoTabActual==='documento' ? 'Entregadas' : periodicoTabActual==='linea' ? 'Entregadas' : 'Con soporte';
   const labelPend = periodicoTabActual==='documento' ? 'Pendientes' : periodicoTabActual==='linea' ? 'Pendientes' : 'Sin soporte';
   const fieldA = periodicoTabActual==='documento' ? 'docsEnt' : periodicoTabActual==='linea' ? 'lineasEnt' : 'eventoCon';
   const fieldB = periodicoTabActual==='documento' ? 'docsPend' : periodicoTabActual==='linea' ? 'lineasPend' : 'eventoSin';
-  const labelRec = periodicoTabActual==='documento' ? 'Dispensas recuperadas' : periodicoTabActual==='linea' ? 'Líneas recuperadas' : 'Soportes recuperados';
+  const fieldTot = periodicoTabActual==='documento' ? 'docsTotal' : periodicoTabActual==='linea' ? 'lineasTotal' : 'eventoTotal';
+  const labelRec = periodicoTabActual==='soporte' ? 'Soportes recuperados' : (periodicoTabActual==='documento' ? 'Dispensas recuperadas' : 'Líneas recuperadas');
   const explicaRec = periodicoTabActual==='soporte'
-    ? 'Dispensas de EVENTO que en un cargue anterior venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte.'
+    ? 'Recuperado = dispensas de EVENTO que en un cargue anterior venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte.'
     : (periodicoTabActual==='documento'
-        ? 'Dispensas que estaban pendientes y en un cargue posterior quedaron entregadas: bajan el índice de pendientes y suben la eficiencia por dispensa.'
-        : 'Líneas que estaban pendientes y en un cargue posterior quedaron entregadas: bajan el índice de pendientes y suben la eficiencia por línea.');
+        ? 'Recuperado = dispensas que estaban pendientes y en un cargue posterior quedaron entregadas.'
+        : 'Recuperado = líneas que estaban pendientes y en un cargue posterior quedaron entregadas.');
 
-  // ---- construir cabeceras dinámicas: Bodega + cols propias del corte + cols de los otros cortes ----
+  // ---- helpers de lectura de métricas ----
+  const findEntry=(corte,bodega)=>metrics[corte].find(x=>x.bodega===bodega);
+  const valA=(corte,bodega)=>{ const e=findEntry(corte,bodega); return e?e[fieldA]:0; };
+  const valB=(corte,bodega)=>{ const e=findEntry(corte,bodega); return e?e[fieldB]:0; };
+  const valT=(corte,bodega)=>{ const e=findEntry(corte,bodega); return e?e[fieldTot]:0; };
+
+  // ---- totales acumulados por corte (para los 3 gráficos) ----
+  const accA=[0,0,0,0], accB=[0,0,0,0];
+  [0,1,2,3].forEach(c=>{ metrics[c].forEach(t=>{ accA[c]+=t[fieldA]; accB[c]+=t[fieldB]; }); });
+
+  // ---- una sola tabla con los 3 cortes ----
+  const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
+  const filas=bodegas.map(bodega=>{
+    const total=valT(3,bodega);
+    const entFinal=valA(3,bodega), pendFinal=valB(3,bodega);
+    const base={ent:valA(0,bodega), pend:valB(0,bodega)};
+    const cortes=[1,2,3].map(c=>({ent:valA(c,bodega), pend:valB(c,bodega)}));
+    const rec=[1,2,3].map(c=>{
+      if(periodicoTabActual==='soporte') return (findEntry(c,bodega)||{}).eventoRec||0;
+      return Math.max(0, valB(c-1,bodega)-valB(c,bodega));
+    });
+    const recTotal=rec.reduce((a,b)=>a+b,0);
+    return {bodega, total, entFinal, pendFinal, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
+  }).filter(f=>f.total||f.entFinal||f.pendFinal)
+    .sort((a,b)=>{
+      const ia=a.indice===null?-1:a.indice, ib=b.indice===null?-1:b.indice;
+      if(ib!==ia) return ib-ia;
+      if(b.pendFinal!==a.pendFinal) return b.pendFinal-a.pendFinal;
+      return String(a.bodega).localeCompare(String(b.bodega),'es');
+    });
+
+  const tot={total:0, ent:0, pend:0, c:[{ent:0,pend:0},{ent:0,pend:0},{ent:0,pend:0}], rec:[0,0,0], recTotal:0};
+  filas.forEach(f=>{
+    tot.total+=f.total; tot.ent+=f.entFinal; tot.pend+=f.pendFinal; tot.recTotal+=f.recTotal;
+    [0,1,2].forEach(i=>{ tot.c[i].ent+=f.cortes[i].ent; tot.c[i].pend+=f.cortes[i].pend; tot.rec[i]+=f.rec[i]; });
+  });
+
+  const dim='style="color:#9CA9B6;"';
+  let cuerpo=filas.map(f=>{
+    let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
+      +'<td>'+fmtInt(f.total)+'</td>'
+      +'<td>'+fmtInt(f.entFinal)+'</td>'
+      +'<td>'+fmtInt(f.pendFinal)+'</td>'
+      +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
+    [0,1,2].forEach(i=>{
+      const prev = i===0 ? f.base : f.cortes[i-1];
+      const cambio = (f.cortes[i].ent!==prev.ent || f.cortes[i].pend!==prev.pend);
+      const attr = cambio ? '' : ' '+dim;
+      const tip = cambio ? ' title="Cambió frente al corte anterior"' : ' title="Sin variación frente al corte anterior"';
+      tds+='<td'+attr+tip+'>'+fmtInt(f.cortes[i].ent)+'</td><td'+attr+tip+'>'+fmtInt(f.cortes[i].pend)+'</td>';
+    });
+    tds+='<td>'+fmtInt(f.recTotal)+'</td>';
+    return '<tr>'+tds+'</tr>';
+  }).join('');
+  let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
+    +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
+    +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
+  [0,1,2].forEach(i=>{ filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>'; });
+  filaTotal+='<td>'+fmtInt(tot.recTotal)+'</td></tr>';
+
+  let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th><th rowspan="2">'+labelEnt+' totales</th><th rowspan="2">'+labelPend+' totales</th><th rowspan="2">Índice de Pendientes</th>'
+    +'<th colspan="2">Corte 1 (1-10)</th><th colspan="2">Corte 2 (11-20)</th><th colspan="2">Corte 3 (21-31)</th>'
+    +'<th rowspan="2">'+labelRec+'</th></tr>';
+  let ths2='<tr><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th></tr>';
+
+  // ---- 3 gráficos, uno por corte (acumulado al cierre de cada corte) ----
   let html='<div class="corte-grid">';
   [1,2,3].forEach(corte=>{
-    const table=metrics[corte];
-    // cabeceras: Bodega | {labelEnt} Corte N | {labelPend} Corte N | ... cols de otros cortes
-    const otherCortes = [1,2,3].filter(c=>c!==corte);
-    const ths = [`<th>Bodega</th><th>${labelEnt} Corte ${corte}</th><th>${labelPend} Corte ${corte}</th>`];
-    otherCortes.forEach(oc => {
-      ths.push(`<th>${labelEnt} Corte ${oc}</th><th>${labelPend} Corte ${oc}</th>`);
-    });
-    let totalA=0, totalB=0, rowsHtml='';
-    table.forEach(t=>{
-      totalA+=t[fieldA]; totalB+=t[fieldB];
-      if(t[fieldA]||t[fieldB]){
-        const tds = [`<td class="txt">${t.bodega}</td><td>${fmtInt(t[fieldA])}</td><td>${fmtInt(t[fieldB])}</td>`];
-        otherCortes.forEach(oc => {
-          const ocEntry = metrics[oc].find(x => x.bodega===t.bodega);
-          const ocA = ocEntry ? ocEntry[fieldA] : 0;
-          const ocB = ocEntry ? ocEntry[fieldB] : 0;
-          tds.push(`<td class="txt" style="color:var(--ink-soft);">${fmtInt(ocA)}</td><td class="txt" style="color:var(--ink-soft);">${fmtInt(ocB)}</td>`);
-        });
-        rowsHtml+=`<tr>${tds.join('')}</tr>`;
-      }
-    });
-    // fila de totales
-    const totalTds = [`<td class="txt">—</td><td>${fmtInt(totalA)}</td><td>${fmtInt(totalB)}</td>`];
-    otherCortes.forEach(oc => {
-      let ocTotA=0, ocTotB=0;
-      metrics[oc].forEach(x=>{ ocTotA+=x[fieldA]; ocTotB+=x[fieldB]; });
-      totalTds.push(`<td class="txt" style="color:var(--ink-soft);">${fmtInt(ocTotA)}</td><td class="txt" style="color:var(--ink-soft);">${fmtInt(ocTotB)}</td>`);
-    });
-    if(table.length) rowsHtml+=`<tr class="total-row">${totalTds.join('')}</tr>`;
-    const numCols = 1 + 2 * 3; // Bodega + 2 cols por cada corte (3 cortes)
-    html+=`
-      <div class="corte-card">
-        <h4>${cortesLabels[corte]}</h4>
-        <svg width="140" height="140" viewBox="0 0 200 200" id="periodicoDonut${corte}"></svg>
-        <div class="legend" style="margin:10px 0 12px;">
-          <div class="item"><span class="sw" style="background:#1E8F5E;"></span>${labelEnt}<span class="val">${fmtInt(totalA)}</span></div>
-          <div class="item"><span class="sw" style="background:#D98A2B;"></span>${labelPend}<span class="val">${fmtInt(totalB)}</span></div>
-        </div>
-        <div class="table-wrap" style="max-height:280px;">
-          <table class="data"><thead><tr>${ths.join('')}</tr></thead>
-          <tbody>${rowsHtml || `<tr><td colspan="${numCols}" class="txt" style="text-align:center;color:#9CA9B6;">Sin cargues en este corte</td></tr>`}</tbody></table>
-        </div>
-      </div>`;
+    const a=accA[corte], b=accB[corte];
+    const prevA=accA[corte-1], prevB=accB[corte-1];
+    const dA=a-prevA, dB=b-prevB;
+    const sinCambio = dA===0 && dB===0;
+    const refPrev = corte===1 ? 'al primer cargue (línea base)' : 'al corte '+(corte-1);
+    const nota = sinCambio
+      ? 'Sin variación frente '+refPrev+': en este corte no llegaron cargues con información nueva.'
+      : 'Variación frente '+refPrev+': '+labelEnt+' '+(dA>=0?'+':'')+fmtInt(dA)+' · '+labelPend+' '+(dB>=0?'+':'')+fmtInt(dB)+'.';
+    html+='<div class="corte-card">'
+      +'<h4>'+cortesLabels[corte]+'</h4>'
+      +'<svg width="150" height="150" viewBox="0 0 200 200" id="periodicoDonut'+corte+'"></svg>'
+      +'<div class="legend" style="margin:10px 0 8px;">'
+      +'<div class="item"><span class="sw" style="background:#1E8F5E;"></span>'+labelEnt+'<span class="val">'+fmtInt(a)+'</span></div>'
+      +'<div class="item"><span class="sw" style="background:#D98A2B;"></span>'+labelPend+'<span class="val">'+fmtInt(b)+'</span></div>'
+      +'<div class="item"><span class="sw" style="background:#063C6B;"></span>'+labelRec+' en el corte<span class="val">'+fmtInt(tot.rec[corte-1])+'</span></div>'
+      +'</div>'
+      +'<p style="margin:0;font-size:11.5px;line-height:1.45;color:'+(sinCambio?'#9CA9B6':'var(--ink-soft)')+';">'+nota+'</p>'
+      +'</div>';
   });
-
-  // ---- donut consolidado: evolución entregas vs pendientes a través de los cortes ----
-  const consolA=[0,0,0], consolB=[0,0,0];
-  [1,2,3].forEach(corte=>{
-    metrics[corte].forEach(t=>{ consolA[corte-1]+=t[fieldA]; consolB[corte-1]+=t[fieldB]; });
-  });
-  const consolTotal = consolA.reduce((a,b)=>a+b,0) + consolB.reduce((a,b)=>a+b,0);
-  html+=`
-    <div class="corte-card" style="grid-column:1/-1;">
-      <h4>Evolución Consolidada — Entregas vs Pendientes</h4>
-      <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
-        <svg width="170" height="170" viewBox="0 0 200 200" id="periodicoDonutConsolidado"></svg>
-        <div style="flex:1;min-width:200px;">
-          <div class="legend" style="margin:0 0 10px;">
-            <div class="item"><span class="sw" style="background:#1E8F5E;"></span>${labelEnt} (total cortes)<span class="val">${fmtInt(consolA.reduce((a,b)=>a+b,0))}</span></div>
-            <div class="item"><span class="sw" style="background:#D98A2B;"></span>${labelPend} (total cortes)<span class="val">${fmtInt(consolB.reduce((a,b)=>a+b,0))}</span></div>
-          </div>
-          <table class="data" style="margin-top:6px;"><thead><tr><th>Corte</th><th>${labelEnt}</th><th>${labelPend}</th><th>% ${labelEnt}</th></tr></thead>
-          <tbody>
-            <tr><td class="txt">Corte 1</td><td>${fmtInt(consolA[0])}</td><td>${fmtInt(consolB[0])}</td><td>${fmtPct(consolA[0]+consolB[0]?consolA[0]/(consolA[0]+consolB[0]):null)}</td></tr>
-            <tr><td class="txt">Corte 2</td><td>${fmtInt(consolA[1])}</td><td>${fmtInt(consolB[1])}</td><td>${fmtPct(consolA[1]+consolB[1]?consolA[1]/(consolA[1]+consolB[1]):null)}</td></tr>
-            <tr><td class="txt">Corte 3</td><td>${fmtInt(consolA[2])}</td><td>${fmtInt(consolB[2])}</td><td>${fmtPct(consolA[2]+consolB[2]?consolA[2]/(consolA[2]+consolB[2]):null)}</td></tr>
-          </tbody></table>
-        </div>
-      </div>
-    </div>`;
-
-  // ---- comparativo periódico de lo RECUPERADO entre cargues ----
-  const bodegasRec=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))]
-    .sort((a,b)=>String(a).localeCompare(String(b),'es'));
-  const findEntry=(corte,bodega)=>metrics[corte].find(x=>x.bodega===bodega);
-  const recRows=bodegasRec.map(bodega=>{
-    const base=(findEntry(0,bodega)||{})[fieldB]||0;
-    const rec=[1,2,3].map(corte=>{
-      if(periodicoTabActual==='soporte') return (findEntry(corte,bodega)||{}).eventoRec||0;
-      const prev=(findEntry(corte-1,bodega)||{})[fieldB]||0;
-      const cur=(findEntry(corte,bodega)||{})[fieldB]||0;
-      return Math.max(0, prev-cur);
-    });
-    const total=rec.reduce((a,b)=>a+b,0);
-    const restante=periodicoTabActual==='soporte'
-      ? ((findEntry(3,bodega)||{}).eventoSin||0)
-      : ((findEntry(3,bodega)||{})[fieldB]||0);
-    return {bodega, base, rec, total, restante, pct: base? total/base : null};
-  }).filter(t=>t.base||t.total||t.restante);
-  const recTot=[0,0,0]; let recBase=0, recTotal=0, recRest=0;
-  recRows.forEach(t=>{ recTot[0]+=t.rec[0]; recTot[1]+=t.rec[1]; recTot[2]+=t.rec[2]; recBase+=t.base; recTotal+=t.total; recRest+=t.restante; });
-  const recFilas=recRows.map(t=>'<tr><td class="txt">'+escHtml(t.bodega)+'</td><td>'+fmtInt(t.base)+'</td><td>'+fmtInt(t.rec[0])+'</td><td>'+fmtInt(t.rec[1])+'</td><td>'+fmtInt(t.rec[2])+'</td><td>'+fmtInt(t.total)+'</td><td>'+fmtInt(t.restante)+'</td><td class="'+effClass(t.pct)+'">'+fmtPct(t.pct)+'</td></tr>').join('');
-  const recFilaTotal='<tr class="total-row"><td class="txt">TOTAL</td><td>'+fmtInt(recBase)+'</td><td>'+fmtInt(recTot[0])+'</td><td>'+fmtInt(recTot[1])+'</td><td>'+fmtInt(recTot[2])+'</td><td>'+fmtInt(recTotal)+'</td><td>'+fmtInt(recRest)+'</td><td>'+fmtPct(recBase?recTotal/recBase:null)+'</td></tr>';
-  const baseLabel = periodicoTabActual==='soporte' ? 'Sin soporte inicial' : 'Pendientes inicial';
-  const restLabel = periodicoTabActual==='soporte' ? 'Sin soporte hoy' : 'Pendientes hoy';
-  html+='<div class="corte-card" style="grid-column:1/-1;">'
-    +'<h4>Comparativo Periódico — '+labelRec+'</h4>'
-    +'<p style="margin:0 0 12px;color:var(--ink-soft);font-size:12px;line-height:1.5;">'+explicaRec+'</p>'
-    +'<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">'
-    +'<svg width="170" height="170" viewBox="0 0 200 200" id="periodicoDonutRecuperados"></svg>'
-    +'<div style="flex:1;min-width:260px;">'
-    +'<div class="legend" style="margin:0 0 10px;">'
-    +'<div class="item"><span class="sw" style="background:#1E8F5E;"></span>'+labelRec+'<span class="val">'+fmtInt(recTotal)+'</span></div>'
-    +'<div class="item"><span class="sw" style="background:#D98A2B;"></span>'+restLabel+'<span class="val">'+fmtInt(recRest)+'</span></div>'
-    +'</div>'
-    +'<div class="table-wrap" style="max-height:300px;">'
-    +'<table class="data"><thead><tr><th>Bodega</th><th>'+baseLabel+'</th><th>Recup. Corte 1</th><th>Recup. Corte 2</th><th>Recup. Corte 3</th><th>Total recuperado</th><th>'+restLabel+'</th><th>% recuperación</th></tr></thead>'
-    +'<tbody>'+(recFilas ? recFilas+recFilaTotal : '<tr><td colspan="8" class="txt" style="text-align:center;color:#9CA9B6;">Aún no hay recuperaciones entre cargues</td></tr>')+'</tbody></table>'
-    +'</div></div></div></div>';
-
   html+='</div>';
+
+  html+='<div class="corte-card" style="margin-top:14px;">'
+    +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte (última versión cargada de cada línea). Las cifras de un corte solo cambian si llegó información nueva; cuando se repiten en gris significa que no hubo variación frente al corte anterior. '+explicaRec+'</p>'
+    +'<div class="table-wrap" style="max-height:460px;">'
+    +'<table class="data"><thead>'+ths1+ths2+'</thead>'
+    +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
+    +'</div></div>';
+
   document.getElementById('periodicoContent').innerHTML=html;
 
-  // ---- donuts individuales por corte ----
+  // ---- pintar los 3 donuts (uno por corte) ----
   [1,2,3].forEach(corte=>{
-    const table=metrics[corte];
-    let a=0,b=0;
-    table.forEach(t=>{ a+=t[fieldA]; b+=t[fieldB]; });
+    const a=accA[corte], b=accB[corte];
     drawDonut('periodicoDonut'+corte, [{label:'',value:a,color:'#1E8F5E'},{label:'',value:b,color:'#D98A2B'}], fmtPct(a+b?a/(a+b):null));
   });
-
-  // ---- donut consolidado ----
-  const cA=consolA.reduce((a,b)=>a+b,0), cB=consolB.reduce((a,b)=>a+b,0);
-  drawDonut('periodicoDonutConsolidado', [{label:'',value:cA,color:'#1E8F5E'},{label:'',value:cB,color:'#D98A2B'}], fmtPct(cA+cB?cA/(cA+cB):null));
-
-  // ---- donut de recuperados entre cargues ----
-  drawDonut('periodicoDonutRecuperados', [{label:'',value:recTotal,color:'#1E8F5E'},{label:'',value:recRest,color:'#D98A2B'}], fmtPct(recTotal+recRest?recTotal/(recTotal+recRest):null));
 }
 
 /* =========================================================================
