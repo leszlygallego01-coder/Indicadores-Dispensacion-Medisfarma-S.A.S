@@ -752,7 +752,10 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <h3>🔁 Traslados realizados por Usuario</h3>
               <p class="seg-desc">Cada fila es un usuario con la cantidad de traslados únicos que realizó y el detalle de líneas: totales, Pareto, No Pareto y no homologadas. Ordenado de mayor a menor cantidad de traslados.</p>
             </div>
-            <button class="btn btn-export" id="btnDescargarTraslados" style="margin-left:auto;align-self:center;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por usuario (Excel)</button>
+            <div style="margin-left:auto;align-self:center;display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-export" id="btnDescargarTraslados" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por usuario (Excel)</button>
+              <button class="btn btn-export" id="btnDescargarTrasladosNoHom" style="background:var(--amber);box-shadow:0 2px 0 #A6641B;">⬇ Descargar líneas no homologadas (Excel)</button>
+            </div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
             <div class="field" style="flex:1;min-width:180px;">
@@ -956,13 +959,15 @@ const DATASETS = [
   {
     key: 'traslados', tabla: 'Tabla_8', title: 'Traslados', required: false,
     desc: 'Traslados entre bodegas realizados por cada usuario. Los datos provienen exclusivamente de la carpeta de Google Drive y se reemplazan por completo en cada sincronización. El Codigo se cruza con la tabla Homólogo para saber si la molécula es Pareto o No Pareto.',
-    cols: ['Traslado','Fecha','Bodega Origen','Bodega Destino','Codigo','Usuario'],
+    cols: ['Traslado','Fecha','Bodega Origen','Bodega Destino','Codigo','Descripcion','Cantidad','Usuario'],
     fields: {
       traslado: ['TRASLADO','NRO TRASLADO','NUMERO TRASLADO','NÚMERO TRASLADO','No TRASLADO','DOCUMENTO TRASLADO','DOCUMENTO','CONSECUTIVO'],
       fecha: ['FECHA','FECHA TRASLADO','FECHA DE TRASLADO','FECHA DEL TRASLADO'],
       bodegaOrigen: ['BODEGA ORIGEN','BODEGA DE ORIGEN','ORIGEN','BODEGA SALIDA'],
       bodegaDestino: ['BODEGA DESTINO','BODEGA DE DESTINO','DESTINO','BODEGA LLEGADA'],
       codigo: ['CODIGO','CÓDIGO','CODIGO ARTICULO','CODIGO DE ARTICULO','COD ARTICULO','COD. ARTICULO'],
+      descripcion: ['DESCRIPCION','DESCRIPCIÓN','DESCRIPCION ARTICULO','DESCRIPCIÓN ARTICULO','ARTICULO','NOMBRE ARTICULO','PRODUCTO'],
+      cantidad: ['CANTIDAD','CANTIDAD TRASLADADA','UNIDADES','CANT','CANT.'],
       usuario: ['USUARIO','USUARIO CREACION','USUARIO CREACIÓN','USUARIO QUE REALIZA','USUARIO TRASLADO','RESPONSABLE']
     }
   },
@@ -2922,6 +2927,8 @@ async function calcularIndicadores(){
         bodegaOrigen: String(r.bodegaOrigen||'').trim(),
         bodegaDestino: String(r.bodegaDestino||'').trim(),
         codigo,
+        descripcion: String(r.descripcion||'').trim() || (codigoToDescripcionDci.get(codigo) || ''),
+        cantidad: toNumber(r.cantidad),
         usuario: String(r.usuario||'').trim() || 'SIN USUARIO',
         moleculaPareto: p
       };
@@ -4933,6 +4940,65 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
     const fecha=new Date().toISOString().slice(0,10);
     XLSX.writeFile(wb, 'Traslados_por_Usuario_'+fecha+'.xlsx');
     showToast('Excel de traslados exportado: '+fmtInt(resumen.length)+' usuarios.');
+  });
+})();
+
+/* Descarga solo las LÍNEAS NO HOMOLOGADAS de traslados (código que no existe en la
+   tabla Homólogo), con las columnas pedidas: Código, Bodega Origen, Bodega Destino,
+   Descripcion, Cantidad y Usuario. Respeta los filtros propios de la sección. */
+(function(){
+  const btn=document.getElementById('btnDescargarTrasladosNoHom');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    const p=state.processed;
+    const all=(p && p.traslados) ? p.traslados : [];
+    if(!all.length){ showToast('No hay traslados cargados para exportar.', true); return; }
+
+    const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
+    const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
+    const busca=normValue((document.getElementById('fTrasladoUsuario')||{}).value||'');
+
+    const filas=all.filter(r=>{
+      if(origen && r.bodegaOrigen!==origen) return false;
+      if(destino && r.bodegaDestino!==destino) return false;
+      if(busca && !normValue(r.usuario).includes(busca)) return false;
+      return r.moleculaPareto!=='PARETO' && r.moleculaPareto!=='NO PARETO';
+    });
+
+    if(!filas.length){ showToast('No hay líneas no homologadas para los filtros actuales.', true); return; }
+
+    const detalle=filas.map(r=>({
+      'Codigo': r.codigo,
+      'Bodega Origen': r.bodegaOrigen,
+      'Bodega Destino': r.bodegaDestino,
+      'Descripcion': r.descripcion||'',
+      'Cantidad': r.cantidad||0,
+      'Usuario': r.usuario
+    }));
+
+    const porCodigo=new Map();
+    filas.forEach(r=>{
+      if(!porCodigo.has(r.codigo)) porCodigo.set(r.codigo, {codigo:r.codigo, descripcion:r.descripcion||'', lineas:0, cantidad:0, usuarios:new Set()});
+      const g=porCodigo.get(r.codigo);
+      g.lineas++; g.cantidad+=(r.cantidad||0); g.usuarios.add(r.usuario);
+      if(!g.descripcion && r.descripcion) g.descripcion=r.descripcion;
+    });
+    const resumenCod=[...porCodigo.values()].sort((a,b)=> (b.lineas-a.lineas) || String(a.codigo).localeCompare(String(b.codigo),'es')).map(g=>({
+      'Codigo': g.codigo,
+      'Descripcion': g.descripcion,
+      'Líneas no homologadas': g.lineas,
+      'Cantidad total': g.cantidad,
+      'Usuarios distintos': g.usuarios.size
+    }));
+
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Líneas no homologadas');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenCod), 'Resumen por Codigo');
+    const fecha=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb, 'Traslados_Lineas_No_Homologadas_'+fecha+'.xlsx');
+
+    const sinDesc=detalle.every(d=>!d['Descripcion']);
+    showToast('Excel exportado: '+fmtInt(detalle.length)+' líneas no homologadas.'+(sinDesc?' Sincroniza de nuevo la tarjeta Traslados para traer Descripcion y Cantidad.':''));
   });
 })();
 
