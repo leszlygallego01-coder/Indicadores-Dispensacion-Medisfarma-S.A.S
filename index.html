@@ -2732,6 +2732,12 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
 
   // Build per-bodega, per-corte metrics
   const cmAll = buildCorteMetrics(filtered); // returns {1:[...], 2:[...], 3:[...]}
+  // Cortes que de verdad recibieron un cargue. Un corte sin cargue queda en cero (“—”)
+  // y no repite las cifras del corte anterior.
+  const cortesActivos = cortesConCargue(filtered);
+  const hayCargues = cortesActivos.size > 0;
+  const DASH = '—';
+  const tdVacio = '<td class="num" style="color:#9CA9B6;" title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">' + DASH + '</td>';
   // Collect unique bodegas from all cortes
   const bodegaSet = new Set();
   [1,2,3].forEach(c => (cmAll[c]||[]).forEach(bm => bodegaSet.add(bm.bodega)));
@@ -2747,16 +2753,17 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   // Se usa la misma fórmula que la celda "Índice de Pendientes" (corte 3 = acumulado final):
   // Índice = Pendientes totales / Documentos totales. Desempate: más pendientes primero,
   // luego orden alfabético para que el resultado sea estable.
+  const corteFinalSeg = corteVigenteHasta(cortesActivos, 3);
   const _idxPend = (b) => {
-    const m = bodegaMetrics[b][3] || {docsTotal:0, docsEnt:0, docsPend:0};
+    const m = bodegaMetrics[b][corteFinalSeg] || {docsTotal:0, docsEnt:0, docsPend:0};
     const tot = m.docsTotal !== undefined ? m.docsTotal : (m.docsEnt + m.docsPend);
     return tot ? m.docsPend / tot : 0;
   };
   bodegas.sort((a,b) => {
     const d = _idxPend(b) - _idxPend(a);
     if(Math.abs(d) > 1e-12) return d;
-    const pa = (bodegaMetrics[a][3]||{docsPend:0}).docsPend || 0;
-    const pb = (bodegaMetrics[b][3]||{docsPend:0}).docsPend || 0;
+    const pa = (bodegaMetrics[a][corteFinalSeg]||{docsPend:0}).docsPend || 0;
+    const pb = (bodegaMetrics[b][corteFinalSeg]||{docsPend:0}).docsPend || 0;
     if(pb !== pa) return pb - pa;
     return a.localeCompare(b,'es');
   });
@@ -2765,11 +2772,13 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const totRow = {};
   for(let c=1; c<=NUM_CORTES; c++){
     let dT=0,dE=0,dP=0;
-    bodegas.forEach(b => {
-      const cd = bodegaMetrics[b][c];
-      if(cd){ dT+=cd.docsTotal; dE+=cd.docsEnt; dP+=cd.docsPend; }
-    });
-    totRow[c] = { docsTotal:dT, docsEnt:dE, docsPend:dP };
+    if(cortesActivos.has(c)){
+      bodegas.forEach(b => {
+        const cd = bodegaMetrics[b][c];
+        if(cd){ dT+=cd.docsTotal; dE+=cd.docsEnt; dP+=cd.docsPend; }
+      });
+    }
+    totRow[c] = { docsTotal:dT, docsEnt:dE, docsPend:dP, sinCargue: !cortesActivos.has(c) };
   }
 
   // Populate corte selector
@@ -2778,19 +2787,30 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   selEl.innerHTML = '';
   for(let c=1; c<=NUM_CORTES; c++){
     const opt = document.createElement('option');
-    opt.value = c; opt.textContent = 'Corte ' + c;
+    opt.value = c;
+    opt.textContent = 'Corte ' + c + (cortesActivos.has(c) ? '' : ' (sin cargue)');
     selEl.appendChild(opt);
   }
+  const ultimoActivo = [3,2,1].find(c => cortesActivos.has(c)) || NUM_CORTES;
   if(prevVal && +prevVal <= NUM_CORTES) selEl.value = prevVal;
-  else selEl.value = _segLastCorte || NUM_CORTES;
+  else selEl.value = (cortesActivos.has(_segLastCorte) ? _segLastCorte : ultimoActivo);
 
   // Render donut for selected corte
   function drawSegDonut(){
     const c = +selEl.value;
     _segLastCorte = c;
+    const sinCargue = !cortesActivos.has(c);
     const tData = totRow[c] || {docsEnt:0, docsPend:0};
-    const ent = tData.docsEnt, pen = tData.docsPend;
+    const ent = sinCargue ? 0 : tData.docsEnt;
+    const pen = sinCargue ? 0 : tData.docsPend;
     const tot = ent + pen;
+    if(sinCargue){
+      drawDonut('segDonut', [{ label:'', value:1, color:'#E8EEF4' }], DASH, '#9CA9B6');
+      document.getElementById('segDonutLegend').innerHTML =
+        '<div class="item" style="color:#9CA9B6;">Corte ' + c + ' sin cargue<span class="val">' + DASH + '</span></div>'
+        + '<div class="item" style="color:#9CA9B6;font-size:11.5px;">Aún no se ha subido Reporte de Dispensación en estas fechas; el corte se actualizará con el próximo cargue.</div>';
+      return;
+    }
     drawDonut('segDonut', [
       { label: 'Entregadas', value: ent, color: '#1E8F5E' },
       { label: 'Pendientes', value: pen, color: '#D98A2B' }
@@ -2808,9 +2828,11 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   for(let c=1; c<=NUM_CORTES; c++){
     hHtml += '<th colspan="2">Corte ' + c + '</th>';
   }
+  void 0;
   hHtml += '</tr><tr>';
   for(let c=1; c<=NUM_CORTES; c++){
-    hHtml += '<th>Entregas</th><th>Pendientes</th>';
+    if(cortesActivos.has(c)) hHtml += '<th>Entregas</th><th>Pendientes</th>';
+    else hHtml += '<th style="color:#9CA9B6;">Sin cargue</th><th style="color:#9CA9B6;">Sin cargue</th>';
   }
   hHtml += '</tr>';
   document.getElementById('tblSeguimientoHead').innerHTML = hHtml;
@@ -2818,7 +2840,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   // Body rows
   let bHtml = '';
   bodegas.forEach(b => {
-    const c3 = bodegaMetrics[b][3] || {docsEnt:0,docsPend:0};
+    const c3 = bodegaMetrics[b][corteFinalSeg] || {docsEnt:0,docsPend:0};
     bHtml += '<tr><td>' + escHtml(b) + '</td>';
     bHtml += '<td class="num">' + fmtInt(c3.docsEnt) + '</td>';
     bHtml += '<td class="num">' + fmtInt(c3.docsPend) + '</td>';
@@ -2827,6 +2849,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
     const iPend = ipTotal ? c3.docsPend / ipTotal : null;
     bHtml += '<td class="' + effClass(iPend) + '">' + fmtPct(iPend) + '</td>';
     for(let c=1; c<=NUM_CORTES; c++){
+      if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
       const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
       bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
       bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
@@ -2834,7 +2857,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
     bHtml += '</tr>';
   });
   // Totals row
-  const t3 = totRow[3] || {docsEnt:0,docsPend:0};
+  const t3 = totRow[corteFinalSeg] || {docsEnt:0,docsPend:0};
   bHtml += '<tr class="total-row"><td>TOTAL</td>';
   bHtml += '<td class="num">' + fmtInt(t3.docsEnt) + '</td>';
   bHtml += '<td class="num">' + fmtInt(t3.docsPend) + '</td>';
@@ -2843,6 +2866,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const t3IPend = t3DocsTotal ? t3.docsPend / t3DocsTotal : null;
   bHtml += '<td class="' + effClass(t3IPend) + '">' + fmtPct(t3IPend) + '</td>';
   for(let c=1; c<=NUM_CORTES; c++){
+    if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
     const cd = totRow[c] || {docsEnt:0,docsPend:0};
     bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
     bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
@@ -3707,6 +3731,9 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
   // --- Seguimiento de Dispensación por Bodega (cargue vs cargue) ---
   if(state.processed && filteredRowsCache.length){
     const cmAll = buildCorteMetrics(filteredRowsCache);
+    // Los cortes sin cargue se exportan vacíos (no repiten cifras del corte anterior).
+    const cortesActivosExp = cortesConCargue(filteredRowsCache);
+    const corteFinalExp = corteVigenteHasta(cortesActivosExp, 3);
     const bodegaSet = new Set();
     [1,2,3].forEach(c => (cmAll[c]||[]).forEach(bm => bodegaSet.add(bm.bodega)));
     const bodegas = Array.from(bodegaSet).sort((a,b) => a.localeCompare(b,'es'));
@@ -3716,21 +3743,31 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
       (cmAll[c]||[]).forEach(bm => { bodegaMetrics[bm.bodega][c] = bm; });
     });
     const segRows = bodegas.map(b => {
-      const c3 = bodegaMetrics[b][3] || {docsEnt:0,docsPend:0};
-      const row = {'Bodega':b,'Entregas totales':c3.docsEnt,'Pendientes totales':c3.docsPend};
+      const cF = bodegaMetrics[b][corteFinalExp] || {docsEnt:0,docsPend:0};
+      const row = {'Bodega':b,'Entregas totales':cF.docsEnt,'Pendientes totales':cF.docsPend};
       for(let c=1;c<=3;c++){
+        const sin = !cortesActivosExp.has(c);
         const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
-        row['Entregas Corte '+c] = cd.docsEnt;
-        row['Pendientes Corte '+c] = cd.docsPend;
+        row['Entregas Corte '+c] = sin ? '' : cd.docsEnt;
+        row['Pendientes Corte '+c] = sin ? '' : cd.docsPend;
       }
       return row;
     });
     // Totals
     const totRow = {};
-    for(let c=1;c<=3;c++){ let dE=0,dP=0; bodegas.forEach(b=>{const cd=bodegaMetrics[b][c];if(cd){dE+=cd.docsEnt;dP+=cd.docsPend;}}); totRow[c]={docsEnt:dE,docsPend:dP}; }
-    const t3 = totRow[3]||{docsEnt:0,docsPend:0};
+    for(let c=1;c<=3;c++){
+      let dE=0,dP=0;
+      if(cortesActivosExp.has(c)) bodegas.forEach(b=>{const cd=bodegaMetrics[b][c];if(cd){dE+=cd.docsEnt;dP+=cd.docsPend;}});
+      totRow[c]={docsEnt:dE,docsPend:dP};
+    }
+    const t3 = totRow[corteFinalExp]||{docsEnt:0,docsPend:0};
     const totExcel = {'Bodega':'TOTAL','Entregas totales':t3.docsEnt,'Pendientes totales':t3.docsPend};
-    for(let c=1;c<=3;c++){ const cd=totRow[c]||{docsEnt:0,docsPend:0}; totExcel['Entregas Corte '+c]=cd.docsEnt; totExcel['Pendientes Corte '+c]=cd.docsPend; }
+    for(let c=1;c<=3;c++){
+      const sin = !cortesActivosExp.has(c);
+      const cd=totRow[c]||{docsEnt:0,docsPend:0};
+      totExcel['Entregas Corte '+c]= sin ? '' : cd.docsEnt;
+      totExcel['Pendientes Corte '+c]= sin ? '' : cd.docsPend;
+    }
     segRows.push(totExcel);
     const wsSeg = XLSX.utils.json_to_sheet(segRows);
     XLSX.utils.book_append_sheet(wb, wsSeg, 'SEGUIMIENTO POR BODEGA');
@@ -3926,6 +3963,24 @@ function esVersionPosterior(a, b){
   if(fa!==fb) return fa>fb;
   return a.idx>b.idx;
 }
+// Cortes que REALMENTE recibieron un cargue del Reporte de Dispensación.
+// Un corte sin cargue no debe mostrar cifras (queda en cero / “—”) hasta que
+// se suba información nueva en esos días; así las cifras solo cambian cuando
+// cambia la información y no se repite el mismo dato en los 3 cortes.
+function cortesConCargue(rows){
+  const s=new Set();
+  (rows||[]).forEach(r=>{
+    if(!r.fechaCargue) return;                 // línea base (sin fecha de cargue)
+    const p=getPeriodoDeCarga(r.fechaCargue);
+    if(p) s.add(p);
+  });
+  return s;
+}
+// Último corte con cargue anterior o igual a `corte` (0 = línea base).
+function corteVigenteHasta(activos, corte){
+  for(let c=corte;c>=1;c--) if(activos.has(c)) return c;
+  return 0;
+}
 // Foto de cada línea al cierre del corte indicado: se toma la ÚLTIMA versión cargada
 // cuyo cargue cae en ese corte o en uno anterior (así el cargue nuevo reemplaza al viejo:
 // lo que estaba pendiente y vuelve a llegar entregado, queda entregado).
@@ -4056,6 +4111,10 @@ function renderReportePeriodico(){
     return true;
   });
   const metrics = buildCorteMetrics(filtered);
+  // Cortes con cargue real: los demás quedan en cero (“—”) y no repiten cifras.
+  const cortesActivos = cortesConCargue(filtered);
+  const activo = c => cortesActivos.has(c);
+  const DASH = '—';
   const cortesLabels={1:'Corte 1 (día 1-10)',2:'Corte 2 (día 11-20)',3:'Corte 3 (día 21-31)'};
   const labelEnt = periodicoTabActual==='documento' ? 'Entregadas' : periodicoTabActual==='linea' ? 'Entregadas' : 'Con soporte';
   const labelPend = periodicoTabActual==='documento' ? 'Pendientes' : periodicoTabActual==='linea' ? 'Pendientes' : 'Sin soporte';
@@ -4076,19 +4135,29 @@ function renderReportePeriodico(){
   const valT=(corte,bodega)=>{ const e=findEntry(corte,bodega); return e?e[fieldTot]:0; };
 
   // ---- totales acumulados por corte (para los 3 gráficos) ----
+  // Solo los cortes con cargue tienen cifras; un corte sin cargue queda en cero.
   const accA=[0,0,0,0], accB=[0,0,0,0];
-  [0,1,2,3].forEach(c=>{ metrics[c].forEach(t=>{ accA[c]+=t[fieldA]; accB[c]+=t[fieldB]; }); });
+  [0,1,2,3].forEach(c=>{
+    if(c>0 && !activo(c)) return;
+    metrics[c].forEach(t=>{ accA[c]+=t[fieldA]; accB[c]+=t[fieldB]; });
+  });
 
   // ---- una sola tabla con los 3 cortes ----
+  // Las columnas “totales” muestran el último estado con cargue real (no el corte 3 vacío).
+  const corteFinal = corteVigenteHasta(cortesActivos, 3);
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
   const filas=bodegas.map(bodega=>{
-    const total=valT(3,bodega);
-    const entFinal=valA(3,bodega), pendFinal=valB(3,bodega);
+    const total=valT(corteFinal,bodega);
+    const entFinal=valA(corteFinal,bodega), pendFinal=valB(corteFinal,bodega);
     const base={ent:valA(0,bodega), pend:valB(0,bodega)};
-    const cortes=[1,2,3].map(c=>({ent:valA(c,bodega), pend:valB(c,bodega)}));
+    const cortes=[1,2,3].map(c=>activo(c)
+      ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false}
+      : {ent:0, pend:0, sin:true});
     const rec=[1,2,3].map(c=>{
+      if(!activo(c)) return 0;
       if(periodicoTabActual==='soporte') return (findEntry(c,bodega)||{}).eventoRec||0;
-      return Math.max(0, valB(c-1,bodega)-valB(c,bodega));
+      const prev=corteVigenteHasta(cortesActivos, c-1);
+      return Math.max(0, valB(prev,bodega)-valB(c,bodega));
     });
     const recTotal=rec.reduce((a,b)=>a+b,0);
     return {bodega, total, entFinal, pendFinal, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
@@ -4107,6 +4176,7 @@ function renderReportePeriodico(){
   });
 
   const dim='style="color:#9CA9B6;"';
+  const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
   let cuerpo=filas.map(f=>{
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
@@ -4114,11 +4184,8 @@ function renderReportePeriodico(){
       +'<td>'+fmtInt(f.pendFinal)+'</td>'
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
-      const prev = i===0 ? f.base : f.cortes[i-1];
-      const cambio = (f.cortes[i].ent!==prev.ent || f.cortes[i].pend!==prev.pend);
-      const attr = cambio ? '' : ' '+dim;
-      const tip = cambio ? ' title="Cambió frente al corte anterior"' : ' title="Sin variación frente al corte anterior"';
-      tds+='<td'+attr+tip+'>'+fmtInt(f.cortes[i].ent)+'</td><td'+attr+tip+'>'+fmtInt(f.cortes[i].pend)+'</td>';
+      if(f.cortes[i].sin){ tds+=tdSinCargue+tdSinCargue; return; }
+      tds+='<td>'+fmtInt(f.cortes[i].ent)+'</td><td>'+fmtInt(f.cortes[i].pend)+'</td>';
     });
     tds+='<td>'+fmtInt(f.recTotal)+'</td>';
     return '<tr>'+tds+'</tr>';
@@ -4126,24 +4193,43 @@ function renderReportePeriodico(){
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
     +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
-  [0,1,2].forEach(i=>{ filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>'; });
+  [0,1,2].forEach(i=>{
+    if(!activo(i+1)){ filaTotal+=tdSinCargue+tdSinCargue; return; }
+    filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>';
+  });
   filaTotal+='<td>'+fmtInt(tot.recTotal)+'</td></tr>';
 
   let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th><th rowspan="2">'+labelEnt+' totales</th><th rowspan="2">'+labelPend+' totales</th><th rowspan="2">Índice de Pendientes</th>'
-    +'<th colspan="2">Corte 1 (1-10)</th><th colspan="2">Corte 2 (11-20)</th><th colspan="2">Corte 3 (21-31)</th>'
+    +'<th colspan="2">Corte 1 (1-10)'+(activo(1)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
+    +'<th colspan="2">Corte 2 (11-20)'+(activo(2)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
+    +'<th colspan="2">Corte 3 (21-31)'+(activo(3)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
     +'<th rowspan="2">'+labelRec+'</th></tr>';
   let ths2='<tr><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th></tr>';
 
   // ---- 3 gráficos, uno por corte (acumulado al cierre de cada corte) ----
+  // Un corte sin cargue se muestra vacío: no hereda ni repite las cifras del corte anterior.
   let html='<div class="corte-grid">';
   [1,2,3].forEach(corte=>{
+    if(!activo(corte)){
+      html+='<div class="corte-card">'
+        +'<h4 style="color:#9CA9B6;">'+cortesLabels[corte]+'</h4>'
+        +'<svg width="150" height="150" viewBox="0 0 200 200" id="periodicoDonut'+corte+'"></svg>'
+        +'<div class="legend" style="margin:10px 0 8px;">'
+        +'<div class="item" style="color:#9CA9B6;">'+labelEnt+'<span class="val">'+DASH+'</span></div>'
+        +'<div class="item" style="color:#9CA9B6;">'+labelPend+'<span class="val">'+DASH+'</span></div>'
+        +'<div class="item" style="color:#9CA9B6;">'+labelRec+' en el corte<span class="val">'+DASH+'</span></div>'
+        +'</div>'
+        +'<p style="margin:0;font-size:11.5px;line-height:1.45;color:#9CA9B6;">Pendiente de cargue: aún no se ha subido Reporte de Dispensación en estas fechas. El corte queda en cero y se llenará con el próximo cargue.</p>'
+        +'</div>';
+      return;
+    }
     const a=accA[corte], b=accB[corte];
-    const prevA=accA[corte-1], prevB=accB[corte-1];
-    const dA=a-prevA, dB=b-prevB;
+    const cPrev=corteVigenteHasta(cortesActivos, corte-1);
+    const dA=a-accA[cPrev], dB=b-accB[cPrev];
     const sinCambio = dA===0 && dB===0;
-    const refPrev = corte===1 ? 'al primer cargue (línea base)' : 'al corte '+(corte-1);
+    const refPrev = cPrev===0 ? 'al primer cargue (línea base)' : 'al corte '+cPrev;
     const nota = sinCambio
-      ? 'Sin variación frente '+refPrev+': en este corte no llegaron cargues con información nueva.'
+      ? 'Sin variación frente '+refPrev+': el cargue de este corte no trajo cambios.'
       : 'Variación frente '+refPrev+': '+labelEnt+' '+(dA>=0?'+':'')+fmtInt(dA)+' · '+labelPend+' '+(dB>=0?'+':'')+fmtInt(dB)+'.';
     html+='<div class="corte-card">'
       +'<h4>'+cortesLabels[corte]+'</h4>'
@@ -4160,7 +4246,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte (última versión cargada de cada línea). Las cifras de un corte solo cambian si llegó información nueva; cuando se repiten en gris significa que no hubo variación frente al corte anterior. '+explicaRec+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Las columnas de totales corresponden al último corte con cargue. '+explicaRec+'</p>'
     +'<div class="table-wrap" style="max-height:460px;">'
     +'<table class="data"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
@@ -4170,6 +4256,10 @@ function renderReportePeriodico(){
 
   // ---- pintar los 3 donuts (uno por corte) ----
   [1,2,3].forEach(corte=>{
+    if(!activo(corte)){
+      drawDonut('periodicoDonut'+corte, [{label:'',value:1,color:'#E8EEF4'}], DASH, '#9CA9B6');
+      return;
+    }
     const a=accA[corte], b=accB[corte];
     drawDonut('periodicoDonut'+corte, [{label:'',value:a,color:'#1E8F5E'},{label:'',value:b,color:'#D98A2B'}], fmtPct(a+b?a/(a+b):null));
   });
