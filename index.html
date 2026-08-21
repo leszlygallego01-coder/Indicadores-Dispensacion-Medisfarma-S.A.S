@@ -3754,7 +3754,7 @@ function descargarImagenTopBodegasDispensa(modo){
   const efG = tD ? tE/tD : 0;
   const pendG = tD ? 1-efG : 0;
 
-  const rowH=23, headH=150, filasY=headH+34;
+  const rowH=23, headH=232, filasY=headH+34;
   const W=1020, H=filasY + rowH*top.length + 56, scale=2;
   const cv=document.createElement('canvas');
   cv.width=W*scale; cv.height=H*scale;
@@ -3775,7 +3775,7 @@ function descargarImagenTopBodegasDispensa(modo){
   ctx.fillText('Generado: '+hoy.toISOString().slice(0,10)+'  ·  Bodegas evaluadas: '+fmtInt(base.length), 28, 114);
 
   // Grafico general (dona) del grupo de bodegas del top
-  const cx=W-118, cy=88, rOut=58, rIn=34;
+  const cx=W-132, cy=118, rOut=82, rIn=50;
   const slices=[{v:efG,c:'#1E8F5E'},{v:pendG,c:'#D98A2B'}];
   const tot=slices.reduce((a,b)=>a+(b.v||0),0) || 1;
   let start=-Math.PI/2;
@@ -3790,16 +3790,16 @@ function descargarImagenTopBodegasDispensa(modo){
     start+=ang;
   });
   ctx.textAlign='center';
-  ctx.fillStyle='#063C6B'; ctx.font='bold 18px Consolas, monospace';
-  ctx.fillText(((esEf?efG:pendG)*100).toFixed(1)+'%', cx, cy+6);
-  ctx.font='10px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
-  ctx.fillText(esEf?'Eficiencia':'Pendiente', cx, cy+21);
+  ctx.fillStyle='#063C6B'; ctx.font='bold 27px Consolas, monospace';
+  ctx.fillText(((esEf?efG:pendG)*100).toFixed(1)+'%', cx, cy+5);
+  ctx.font='12px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
+  ctx.fillText(esEf?'Eficiencia':'Pendiente', cx, cy+26);
   ctx.textAlign='left';
 
   // Resumen general del top 20 (a la izquierda de la dona)
-  const rx=W-330; let ry=44;
-  ctx.font='bold 12px Arial, sans-serif'; ctx.fillStyle='#063C6B';
-  ctx.fillText('General del Top 20', rx, ry); ry+=19;
+  const rx=W-470; let ry=52;
+  ctx.font='bold 13px Arial, sans-serif'; ctx.fillStyle='#063C6B';
+  ctx.fillText('General del Top 20', rx, ry); ry+=21;
   ctx.font='12px Arial, sans-serif';
   const resumen=[
     ['Dispensas totales', fmtInt(tD)],
@@ -3810,8 +3810,17 @@ function descargarImagenTopBodegasDispensa(modo){
   resumen.forEach(p=>{
     ctx.fillStyle='#5C6C7E'; ctx.fillText(p[0], rx, ry);
     ctx.fillStyle='#1B2733'; ctx.font='bold 12px Consolas, monospace';
-    ctx.fillText(p[1], rx+150, ry);
+    ctx.textAlign='right'; ctx.fillText(p[1], rx+240, ry); ctx.textAlign='left';
     ctx.font='12px Arial, sans-serif';
+    ry+=19;
+  });
+
+  // Leyenda de colores de la dona
+  ry+=8;
+  [['Entregadas (eficiencia)','#1E8F5E'],['Pendientes','#D98A2B']].forEach(l=>{
+    ctx.fillStyle=l[1]; ctx.fillRect(rx, ry-9, 11, 11);
+    ctx.fillStyle='#5C6C7E'; ctx.font='11.5px Arial, sans-serif';
+    ctx.fillText(l[0], rx+18, ry);
     ry+=18;
   });
 
