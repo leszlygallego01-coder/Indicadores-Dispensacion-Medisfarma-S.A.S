@@ -471,6 +471,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <button data-sub="soporte">Indicador soporte evento</button>
         <button data-sub="inactivas">Indicador por Dispensas Inactivas</button>
         <button data-sub="traslados">Indicador de Traslados Realizados</button>
+        <button data-sub="facturas">Información por factura</button>
       </div>
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
@@ -780,6 +781,39 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
       </div>
 
+      <!-- ---- SUBVISTA: INFORMACIÓN POR FACTURA ---- -->
+      <div class="subview" id="sub-facturas">
+        <div class="helpbox">Esta sección se calcula con la tabla <b>Facturas</b> (carpeta de Drive). Cada <b>Codigo</b> facturado se cruza con la tabla <b>Homólogo</b>: si el código existe en el catálogo se cuenta como <b>homologado</b>, si no existe se cuenta como <b>no homologado</b>. Los códigos se cuentan <b>sin repetir</b> dentro de cada punto de venta. El filtro de <b>Punto de venta</b> aplica únicamente a esta sección y es independiente de los filtros generales de la pantalla.</div>
+        <div class="helpbox" id="facturasDiag" style="display:none;"></div>
+        <div class="stat-row" id="statsFacturas"></div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🧾 Códigos facturados por Punto de venta</h3>
+              <p class="seg-desc">Cada fila es un punto de venta con la cantidad de códigos distintos facturados y su desglose entre homologados y no homologados. Ordenado de mayor a menor cantidad de códigos.</p>
+            </div>
+            <button class="btn btn-export" id="btnDescargarSinHomologo" style="margin-left:auto;align-self:center;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar códigos sin homólogo (Excel)</button>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="field" style="flex:1;min-width:220px;max-width:380px;">
+              <label>Punto de venta</label>
+              <select id="fFacturaPunto"><option value="">Todos los puntos de venta</option></select>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:520px;">
+            <table class="data" id="tblFacturasPunto">
+              <thead>
+                <tr>
+                  <th>#</th><th>Punto de venta</th><th>Códigos facturados</th><th>Códigos homologados</th><th>Códigos no homologados</th><th>% homologado</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -931,6 +965,19 @@ const DATASETS = [
       codigo: ['CODIGO','CÓDIGO','CODIGO ARTICULO','CODIGO DE ARTICULO','COD ARTICULO','COD. ARTICULO'],
       usuario: ['USUARIO','USUARIO CREACION','USUARIO CREACIÓN','USUARIO QUE REALIZA','USUARIO TRASLADO','RESPONSABLE']
     }
+  },
+  {
+    key: 'facturas', tabla: 'Tabla_9', title: 'Facturas', required: false,
+    desc: 'Facturas por punto de venta. Los datos provienen exclusivamente de la carpeta de Google Drive y se reemplazan por completo en cada sincronización. El Codigo se cruza con la tabla Homólogo para saber si el código está homologado o no.',
+    cols: ['Fecha Factura','Factura','Codigo','Descripcion','Cantidad','Punto de venta'],
+    fields: {
+      fechaFactura: ['FECHA FACTURA','FECHA DE FACTURA','FECHA DE LA FACTURA','FECHA FACTURACION','FECHA FACTURACIÓN','FECHA'],
+      factura: ['FACTURA','NRO FACTURA','NUMERO FACTURA','NÚMERO FACTURA','No FACTURA','NUMERO DE FACTURA','DOCUMENTO','CONSECUTIVO'],
+      codigo: ['CODIGO','CÓDIGO','CODIGO ARTICULO','CODIGO DE ARTICULO','COD ARTICULO','COD. ARTICULO','CODIGO ARTICLE'],
+      descripcion: ['DESCRIPCION','DESCRIPCIÓN','DESCRIPCION ARTICULO','DESCRIPCIÓN ARTICULO','ARTICULO','NOMBRE ARTICULO'],
+      cantidad: ['CANTIDAD','CANTIDADES','UNIDADES','CANT','CANT.'],
+      puntoVenta: ['PUNTO DE VENTA','PUNTO VENTA','PUNTOVENTA','PUNTO','BODEGA','BODEGA DETALLE','SUCURSAL','PDV']
+    }
   }
 ];
 
@@ -1008,7 +1055,7 @@ function deserializeFromFirestore(doc){
    Se usa IndexedDB (no localStorage) porque el acumulado del Reporte puede
    superar facilmente la cuota de localStorage.
    ========================================================================= */
-const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo', 'traslados'];
+const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo', 'traslados', 'facturas'];
 function isDriveOnlyKey(k){ return DRIVE_ONLY_KEYS.indexOf(k) >= 0; }
 
 const LOCAL_DB_NAME = 'medisfarma_drive_local';
@@ -1151,6 +1198,9 @@ async function idbDelete(key) {
     } else if (key === 'traslados') {
       // Traslados NO usa localStorage: solo memoria + IndexedDB
       _driveFilesTraslados = [];
+    } else if (key === 'facturas') {
+      // Facturas NO usa localStorage: solo memoria + IndexedDB
+      _driveFilesFacturas = [];
     }
     delete state.loaded[key];
     return;
@@ -1180,6 +1230,8 @@ async function idbClearAll() {
   _driveFiles = [];
   _driveFilesReporte = [];
   _driveFilesHomologo = [];
+  _driveFilesTraslados = [];
+  _driveFilesFacturas = [];
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1460,14 +1512,17 @@ const DRIVE_FOLDER_ID = '1eHRKlKXViXc5F_2yNPIXFCYsd-V26EpU';            // Inven
 const DRIVE_FOLDER_REPORTE = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';       // Reportes de Dispensación
 const DRIVE_FOLDER_HOMOLOGO = '11UzrdMdVlcwZFWusXg5fUastekt0eRPb';      // Tabla Homólogo
 const DRIVE_FOLDER_TRASLADOS = '1DJrU4m0vzZY2AHaXPBdIu80gDEgZtJzK';     // Traslados entre bodegas
+const DRIVE_FOLDER_FACTURAS = '1MOFehAcE_nKHGLc4QV4cAUUDGZIi99Ac';      // Facturas por punto de venta
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 let _driveSyncing = false;
 let _driveSyncingReporte = false;
 let _driveSyncingHomologo = false;
 let _driveSyncingTraslados = false;
+let _driveSyncingFacturas = false;
 let _driveFilesReporte = [];
 let _driveFilesHomologo = []; // solo en memoria: Homologo no usa localStorage
 let _driveFilesTraslados = []; // solo en memoria: Traslados no usa localStorage
+let _driveFilesFacturas = []; // solo en memoria: Facturas no usa localStorage
 let _driveFiles = []; // archivos listados del folder de Drive
 
 /* Fila de configuracion del acceso a Google (boton + ID actual acortado) */
@@ -1716,6 +1771,63 @@ function trasladosCardHTML(d, loaded) {
     html += '<div class="drive-file-list">';
     for (let i = 0; i < _driveFilesTraslados.length; i++) {
       const f = _driveFilesTraslados[i];
+      html += '<div class="drive-file-item">';
+      html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
+      if (f.modifiedTime) {
+        const dt = new Date(f.modifiedTime);
+        html += '<span class="fdate">' + dt.toLocaleDateString('es') + ' ' + dt.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  if (loaded && loaded.updatedAt) {
+    const sd = new Date(loaded.updatedAt);
+    html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b></div>';
+  }
+
+  return html;
+}
+
+/* ---------- Tarjeta "Facturas": solo Google Drive (reemplaza, no acumula) ---------- */
+function facturasCardHTML(d, loaded) {
+  const syncing = _driveSyncingFacturas;
+  let html = '';
+
+  html += '<h3>' + d.title + ' <span class="drive-badge">☁️ solo Google Drive</span></h3>';
+  html += '<p class="desc">' + d.desc + '</p>';
+  html += '<div class="cols">' + d.cols.join(' · ') + '</div>';
+
+  html += '<div class="drive-folder-info">📂 Carpeta Drive: <code>Facturas</code><br>ID: <code>' + DRIVE_FOLDER_FACTURAS + '</code></div>';
+
+  html += '<button class="drive-sync-btn" id="btnDriveSyncFacturas" onclick="syncFacturasFromDrive()"' + (syncing ? ' disabled' : '') + '>';
+  html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Facturas" (Drive)';
+  html += '</button>';
+
+  html += driveConfigRowHTML();
+
+  if (_driveErrorFacturas) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorFacturas) + '</div>';
+  }
+
+  html += '<div class="status-row">';
+  if (loaded) {
+    html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas</span>';
+    html += '<button class="clear" data-key="' + d.key + '">Quitar</button>';
+  } else {
+    html += '<span class="empty">Sin cargar</span><span></span>';
+  }
+  html += '</div>';
+
+  if (loaded && loaded.fileName) {
+    html += '<div class="filename">Archivo: ' + escapeHtmlTxt(loaded.fileName) + '</div>';
+  }
+
+  if (_driveFilesFacturas.length > 0) {
+    html += '<div class="drive-file-list">';
+    for (let i = 0; i < _driveFilesFacturas.length; i++) {
+      const f = _driveFilesFacturas[i];
       html += '<div class="drive-file-item">';
       html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
       if (f.modifiedTime) {
@@ -2194,6 +2306,55 @@ async function syncTrasladosFromDrive() {
   }
 }
 
+/* ---------- Sincronización Drive de "Facturas" (REEMPLAZA, no acumula) ----------
+   Lee el archivo más reciente de la carpeta de Drive y sustituye por completo la
+   tabla de facturas. Los datos quedan solo en el almacén local del navegador. */
+async function syncFacturasFromDrive() {
+  if (_driveSyncingFacturas) return;
+  _driveSyncingFacturas = true;
+  renderUploadCards();
+
+  const KEY = 'facturas';
+  const def = DATASETS.find(d => d.key === KEY);
+
+  try {
+    clearDriveError('facturas');
+    const accessToken = await authenticateDrive();
+
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_FACTURAS);
+    if (!files || !files.length) throw new Error('NO_FILES');
+
+    _driveFilesFacturas = files.map(f => ({ name: f.name, modifiedTime: f.modifiedTime }));
+
+    const newest = files.slice().sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+
+    showToast('Leyendo desde Drive: ' + newest.name + '…');
+    const buf = await downloadDriveFile(accessToken, newest.id, newest.mimeType);
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true, dense: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!aoa.length) throw new Error('El archivo está vacío.');
+
+    const rows = parseRowsFromAOA(aoa, def);
+    if (!rows.length) {
+      showToast('No se encontraron filas de datos en el archivo de Drive.', true);
+      return;
+    }
+
+    await idbPut({ key: KEY, rows, fileName: newest.name, batches: null, updatedAt: new Date().toISOString() });
+
+    showToast('"' + def.title + '" sincronizado desde Drive: ' + fmtInt(rows.length) + ' filas (tabla reemplazada).');
+
+    await refreshStatusFromDB();
+  } catch (err) {
+    console.error('Drive sync error (facturas):', err);
+    showDriveError('facturas', driveErrorMessage(err), err);
+  } finally {
+    _driveSyncingFacturas = false;
+    renderUploadCards();
+  }
+}
+
 /* ---------- Capa de diagnostico para llamadas a Google Drive ----------
    Antes cualquier fallo se convertia en un mensaje generico de "sin permiso",
    lo que hacia imposible saber que estaba pasando realmente. Ahora se conserva
@@ -2348,6 +2509,7 @@ let _driveErrorInventario = '';
 let _driveErrorReporte = '';
 let _driveErrorHomologo = '';
 let _driveErrorTraslados = '';
+let _driveErrorFacturas = '';
 function escapeHtmlTxt(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -2361,6 +2523,7 @@ function showDriveError(which, message, err) {
   if (which === 'reporte') _driveErrorReporte = full;
   else if (which === 'homologo') _driveErrorHomologo = full;
   else if (which === 'traslados') _driveErrorTraslados = full;
+  else if (which === 'facturas') _driveErrorFacturas = full;
   else _driveErrorInventario = full;
   showToast(message, true);
 }
@@ -2368,6 +2531,7 @@ function clearDriveError(which) {
   if (which === 'reporte') _driveErrorReporte = '';
   else if (which === 'homologo') _driveErrorHomologo = '';
   else if (which === 'traslados') _driveErrorTraslados = '';
+  else if (which === 'facturas') _driveErrorFacturas = '';
   else _driveErrorInventario = '';
 }
 
@@ -2443,6 +2607,9 @@ function renderUploadCards(){
     } else if(d.key === 'traslados') {
       card.className = 'card drive-only optional' + (loaded ? ' loaded' : '');
       card.innerHTML = trasladosCardHTML(d, loaded);
+    } else if(d.key === 'facturas') {
+      card.className = 'card drive-only optional' + (loaded ? ' loaded' : '');
+      card.innerHTML = facturasCardHTML(d, loaded);
     } else {
       card.innerHTML = `<h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
       <p class="desc">${d.desc}</p>
@@ -2762,9 +2929,28 @@ async function calcularIndicadores(){
     const trasladosOrigenes = Array.from(new Set(trasladosRows.map(r=>r.bodegaOrigen).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
     const trasladosDestinos = Array.from(new Set(trasladosRows.map(r=>r.bodegaDestino).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
 
-    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues, traslados:trasladosRows, trasladosOrigenes, trasladosDestinos};
+    // ---- Tabla_9 Facturas: cruce del Codigo con la tabla Homólogo (homologado / no homologado) ----
+    const facturasRaw = byKey.facturas || [];
+    const facturasRows = facturasRaw.map(r=>{
+      const codigo = normValue(r.codigo);
+      const hom = codigoToHomologo.has(codigo) ? String(codigoToHomologo.get(codigo)||'').trim() : '';
+      return {
+        fechaFactura: toDateSafe(r.fechaFactura),
+        factura: String(r.factura||'').trim(),
+        codigo,
+        descripcion: String(r.descripcion||'').trim() || (codigoToDescripcionDci.get(codigo) || ''),
+        cantidad: toNumber(r.cantidad),
+        puntoVenta: String(r.puntoVenta||'').trim() || 'SIN PUNTO DE VENTA',
+        homologo: hom,
+        tieneHomologo: codigoToHomologo.has(codigo)
+      };
+    });
+    const facturasPuntos = Array.from(new Set(facturasRows.map(r=>r.puntoVenta).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+
+    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues, traslados:trasladosRows, trasladosOrigenes, trasladosDestinos, facturas:facturasRows, facturasPuntos};
     populateFilters();
     populateTrasladosFilters();
+    populateFacturasFilters();
     aplicarFiltrosYRenderizar();
     document.getElementById('resCount').textContent=fmtInt(rows.length);
     switchTab('resultados');
@@ -3375,6 +3561,171 @@ function renderIndicadorTraslados(){
 (function(){
   const el=document.getElementById('fTrasladoUsuario');
   if(el) el.addEventListener('input', renderIndicadorTraslados);
+})();
+
+/* =========================================================================
+   Información por factura (tabla Facturas + cruce Homólogo)
+   Filtro propio: Punto de venta (no afecta al resto de la pantalla).
+   ========================================================================= */
+let _facturasPuntoCache=[];
+
+function populateFacturasFilters(){
+  const p=state.processed; if(!p) return;
+  const sel=document.getElementById('fFacturaPunto');
+  if(sel){
+    const prev=sel.value||'';
+    const ops=p.facturasPuntos||[];
+    sel.innerHTML='<option value="">Todos los puntos de venta</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+    sel.value = ops.includes(prev) ? prev : '';
+  }
+  renderInfoPorFactura();
+}
+
+function renderInfoPorFactura(){
+  const tb=document.querySelector('#tblFacturasPunto tbody');
+  if(!tb) return;
+  const p=state.processed;
+  const all=(p && p.facturas) ? p.facturas : [];
+  const statsEl=document.getElementById('statsFacturas');
+  const diagEl=document.getElementById('facturasDiag');
+
+  if(!all.length){
+    if(statsEl) statsEl.innerHTML='';
+    if(diagEl){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Sin datos de facturas.</b> Ve a la pestaña de cargue, sincroniza la tarjeta <b>Facturas</b> desde Google Drive y vuelve a calcular los indicadores.';
+    }
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay facturas cargadas.</td></tr>';
+    _facturasPuntoCache=[];
+    return;
+  }
+
+  const punto=(document.getElementById('fFacturaPunto')||{}).value||'';
+  const filas=all.filter(r=>{
+    if(punto && r.puntoVenta!==punto) return false;
+    return true;
+  });
+
+  // Códigos SIN REPETIR dentro de cada punto de venta.
+  const porPunto=new Map();
+  filas.forEach(r=>{
+    const k=r.puntoVenta||'SIN PUNTO DE VENTA';
+    if(!porPunto.has(k)) porPunto.set(k, {punto:k, codigos:new Set(), hom:new Set(), noHom:new Set(), lineas:0, cantidad:0});
+    const g=porPunto.get(k);
+    g.lineas++; g.cantidad+=r.cantidad;
+    if(!r.codigo) return;
+    g.codigos.add(r.codigo);
+    if(r.tieneHomologo) g.hom.add(r.codigo); else g.noHom.add(r.codigo);
+  });
+
+  const lista=[...porPunto.values()].map(g=>({
+    punto:g.punto, codigos:g.codigos.size, hom:g.hom.size, noHom:g.noHom.size,
+    lineas:g.lineas, cantidad:g.cantidad
+  })).sort((a,b)=> (b.codigos-a.codigos) || a.punto.localeCompare(b.punto,'es'));
+
+  _facturasPuntoCache=lista;
+
+  const facturasUnicas=new Set(filas.map((r,i)=>r.factura?('F:'+r.factura):('L:'+i))).size;
+  const codigosGlobal=new Set(filas.map(r=>r.codigo).filter(Boolean));
+  const codigosHomGlobal=new Set(filas.filter(r=>r.codigo && r.tieneHomologo).map(r=>r.codigo));
+  const codigosNoHomGlobal=new Set(filas.filter(r=>r.codigo && !r.tieneHomologo).map(r=>r.codigo));
+  const fechas=filas.map(r=>r.fechaFactura).filter(Boolean).sort((a,b)=>a-b);
+
+  if(statsEl){
+    statsEl.innerHTML =
+      '<div class="stat"><div class="label">Facturas</div><div class="value">'+fmtInt(facturasUnicas)+'</div>'+
+      '<div class="sub">'+fmtInt(filas.length)+' líneas facturadas</div></div>'+
+      '<div class="stat"><div class="label">Puntos de venta</div><div class="value">'+fmtInt(lista.length)+'</div></div>'+
+      '<div class="stat"><div class="label">Códigos distintos</div><div class="value">'+fmtInt(codigosGlobal.size)+'</div></div>'+
+      '<div class="stat"><div class="label">Códigos homologados</div><div class="value">'+fmtInt(codigosHomGlobal.size)+'</div>'+
+      '<div class="sub">'+fmtPct(codigosGlobal.size?codigosHomGlobal.size/codigosGlobal.size:null)+' del total</div></div>'+
+      '<div class="stat"><div class="label">Códigos sin homólogo</div><div class="value">'+fmtInt(codigosNoHomGlobal.size)+'</div></div>'+
+      '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
+        (fechas.length ? escHtml(dateToISO(fechas[0])+' → '+dateToISO(fechas[fechas.length-1])) : '—')+'</div></div>';
+  }
+
+  if(diagEl){
+    const sinCodigo=filas.filter(r=>!r.codigo).length;
+    if(codigosNoHomGlobal.size>0 || sinCodigo>0){
+      diagEl.style.display='';
+      let t='';
+      if(codigosNoHomGlobal.size>0) t+='<b>Nota:</b> '+fmtInt(codigosNoHomGlobal.size)+' códigos facturados no se encontraron en la tabla Homólogo. Descárgalos con el botón "Descargar códigos sin homólogo".';
+      if(sinCodigo>0) t+=(t?' ':'')+fmtInt(sinCodigo)+' líneas vienen sin Codigo y no se pueden clasificar.';
+      diagEl.innerHTML=t;
+    } else {
+      diagEl.style.display='none'; diagEl.innerHTML='';
+    }
+  }
+
+  if(!lista.length){
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay facturas para los filtros seleccionados.</td></tr>';
+    return;
+  }
+
+  let h=lista.map((u,i)=>
+    '<tr><td>'+(i+1)+'</td>'+
+    '<td class="txt">'+escHtml(u.punto)+'</td>'+
+    '<td><b>'+fmtInt(u.codigos)+'</b></td>'+
+    '<td>'+fmtInt(u.hom)+'</td>'+
+    '<td>'+fmtInt(u.noHom)+'</td>'+
+    '<td>'+fmtPct(u.codigos?u.hom/u.codigos:null)+'</td></tr>'
+  ).join('');
+  const sumC=lista.reduce((a,u)=>a+u.codigos,0);
+  const sumH=lista.reduce((a,u)=>a+u.hom,0);
+  const sumN=lista.reduce((a,u)=>a+u.noHom,0);
+  h+='<tr class="total-row"><td>—</td><td class="txt">TOTAL ('+lista.length+(lista.length===1?' punto)':' puntos)')+'</td>'+
+     '<td>'+fmtInt(sumC)+'</td><td>'+fmtInt(sumH)+'</td><td>'+fmtInt(sumN)+'</td>'+
+     '<td>'+fmtPct(sumC?sumH/sumC:null)+'</td></tr>';
+  tb.innerHTML=h;
+}
+
+(function(){
+  const el=document.getElementById('fFacturaPunto');
+  if(el) el.addEventListener('change', renderInfoPorFactura);
+})();
+
+/* ---- Excel de códigos facturados SIN homólogo (un registro por código y punto de venta) ---- */
+(function(){
+  const btn=document.getElementById('btnDescargarSinHomologo');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    const p=state.processed;
+    const all=(p && p.facturas) ? p.facturas : [];
+    if(!all.length){ showToast('No hay facturas cargadas para exportar.', true); return; }
+
+    const punto=(document.getElementById('fFacturaPunto')||{}).value||'';
+    const filas=all.filter(r=>{
+      if(punto && r.puntoVenta!==punto) return false;
+      return r.codigo && !r.tieneHomologo;
+    });
+    if(!filas.length){ showToast('No hay códigos sin homólogo para el filtro actual.', true); return; }
+
+    // Sin repetir códigos: se agrupa por Codigo + Punto de venta y se suma la cantidad.
+    const g=new Map();
+    filas.forEach(r=>{
+      const k=r.codigo+'||'+r.puntoVenta;
+      if(!g.has(k)) g.set(k, {codigo:r.codigo, descripcion:r.descripcion||'', punto:r.puntoVenta, cantidad:0, lineas:0});
+      const o=g.get(k);
+      o.cantidad+=r.cantidad; o.lineas++;
+      if(!o.descripcion && r.descripcion) o.descripcion=r.descripcion;
+    });
+
+    const detalle=[...g.values()].sort((a,b)=>
+      a.punto.localeCompare(b.punto,'es') || (b.cantidad-a.cantidad) || a.codigo.localeCompare(b.codigo,'es')
+    ).map(o=>({
+      'Código': o.codigo,
+      'Descripción': o.descripcion,
+      'Cantidad total': o.cantidad,
+      'Punto de venta': o.punto
+    }));
+
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Codigos sin Homologo');
+    const fecha=new Date().toISOString().slice(0,10);
+    const sufijo=(punto || 'Todos').replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ ]+/g,'').trim().replace(/\s+/g,'_');
+    XLSX.writeFile(wb, 'Codigos_sin_Homologo_'+sufijo+'_'+fecha+'.xlsx');
+    showToast('Excel exportado: '+fmtInt(detalle.length)+' códigos sin homólogo.');
+  });
 })();
 
 // ---- Comparativo PRIMER CARGUE vs ÚLTIMO CARGUE del Reporte de Dispensación ----
@@ -4552,6 +4903,8 @@ document.querySelectorAll('.result-tabs button').forEach(b=>{
     b.classList.add('active');
     document.querySelectorAll('.subview').forEach(v=>v.classList.remove('active'));
     document.getElementById('sub-'+b.dataset.sub).classList.add('active');
+    if(b.dataset.sub==='facturas' && typeof renderInfoPorFactura==='function') renderInfoPorFactura();
+    if(b.dataset.sub==='traslados' && typeof renderIndicadorTraslados==='function') renderIndicadorTraslados();
   });
 });
 
