@@ -741,7 +741,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
       <!-- ---- SUBVISTA: TRASLADOS REALIZADOS ---- -->
       <div class="subview" id="sub-traslados">
-        <div class="helpbox">Este indicador se calcula con la tabla <b>Traslados</b> (carpeta de Drive). Se cuentan <b>traslados únicos</b> (número de Traslado sin repetir) por usuario: si un traslado tiene varias líneas de artículos, cuenta una sola vez. El <b>Codigo</b> de cada línea se cruza con la tabla Homólogo para clasificar el traslado como <b>Pareto</b> o <b>No Pareto</b>; un mismo traslado puede sumar en ambas columnas si mueve moléculas de los dos tipos. Los filtros de esta sección son independientes de los filtros generales de la pantalla.</div>
+        <div class="helpbox">Este indicador se calcula con la tabla <b>Traslados</b> (carpeta de Drive). Se cuentan <b>traslados únicos</b> (número de Traslado sin repetir) por usuario: si un traslado tiene varias líneas de artículos, cuenta una sola vez. El <b>Codigo</b> de cada línea se cruza con la tabla Homólogo para clasificar el traslado como <b>Pareto</b> o <b>No Pareto</b>; un mismo traslado puede sumar en ambas columnas si mueve moléculas de los dos tipos. Además se muestran las <b>líneas</b> (cada registro de la tabla, ya que un traslado puede repetirse con varios Codigos): <b>Líneas Pareto + Líneas No Pareto + Líneas no homologadas = Líneas totales</b>. Los filtros de esta sección son independientes de los filtros generales de la pantalla.</div>
         <div class="helpbox" id="trasladosDiag" style="display:none;"></div>
         <div class="stat-row" id="statsTraslados"></div>
 
@@ -749,7 +749,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="flex:1;min-width:220px;">
               <h3>🔁 Traslados realizados por Usuario</h3>
-              <p class="seg-desc">Cada fila es un usuario con la cantidad de traslados únicos que realizó, separados en Pareto y No Pareto. Ordenado de mayor a menor cantidad de traslados.</p>
+              <p class="seg-desc">Cada fila es un usuario con la cantidad de traslados únicos que realizó (separados en Pareto y No Pareto) y el detalle de líneas: totales, Pareto, No Pareto y no homologadas. Ordenado de mayor a menor cantidad de traslados.</p>
             </div>
             <button class="btn btn-export" id="btnDescargarTraslados" style="margin-left:auto;align-self:center;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por usuario (Excel)</button>
           </div>
@@ -771,7 +771,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <table class="data" id="tblTrasladosUsuario">
               <thead>
                 <tr>
-                  <th>#</th><th>Usuario</th><th>Traslados realizados</th><th>Pareto</th><th>No Pareto</th><th>% del total</th>
+                  <th>#</th><th>Usuario</th><th>Traslados realizados</th><th>Pareto</th><th>No Pareto</th><th>Líneas totales</th><th>Líneas Pareto</th><th>Líneas No Pareto</th><th>Líneas no homologadas</th><th>% del total</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -3293,7 +3293,7 @@ function renderIndicadorTraslados(){
       diagEl.style.display='';
       diagEl.innerHTML='<b>Sin datos de traslados.</b> Ve a la pestaña de cargue, sincroniza la tarjeta <b>Traslados</b> desde Google Drive y vuelve a calcular los indicadores.';
     }
-    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados cargados.</td></tr>';
+    tb.innerHTML='<tr><td colspan="10" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados cargados.</td></tr>';
     _trasladosUsuarioCache=[];
     return;
   }
@@ -3314,16 +3314,20 @@ function renderIndicadorTraslados(){
   const porUsuario=new Map();
   filas.forEach((r,i)=>{
     const u=r.usuario||'SIN USUARIO';
-    if(!porUsuario.has(u)) porUsuario.set(u, {usuario:u, ids:new Set(), pareto:new Set(), noPareto:new Set(), lineas:0});
+    if(!porUsuario.has(u)) porUsuario.set(u, {usuario:u, ids:new Set(), pareto:new Set(), noPareto:new Set(), lineas:0, linParetoetc:0, linNoPareto:0, linNoHom:0});
     const g=porUsuario.get(u);
     const id=r.traslado ? 'T:'+r.traslado : 'F:'+i;
     g.ids.add(id); g.lineas++;
-    if(r.moleculaPareto==='PARETO') g.pareto.add(id);
-    else if(r.moleculaPareto==='NO PARETO') g.noPareto.add(id);
+    // Cada registro de la tabla es una LÍNEA: un mismo traslado con varios Codigos
+    // aporta varias líneas. Pareto + No Pareto + No homologadas = Líneas totales.
+    if(r.moleculaPareto==='PARETO'){ g.pareto.add(id); g.linParetoetc++; }
+    else if(r.moleculaPareto==='NO PARETO'){ g.noPareto.add(id); g.linNoPareto++; }
+    else g.linNoHom++;
   });
 
   const listaFull=[...porUsuario.values()].map(g=>({
-    usuario:g.usuario, cant:g.ids.size, pareto:g.pareto.size, noPareto:g.noPareto.size, lineas:g.lineas
+    usuario:g.usuario, cant:g.ids.size, pareto:g.pareto.size, noPareto:g.noPareto.size,
+    lineas:g.lineas, linPareto:g.linParetoetc, linNoPareto:g.linNoPareto, linNoHom:g.linNoHom
   })).sort((a,b)=> (b.cant-a.cant) || a.usuario.localeCompare(b.usuario,'es'));
 
   const totalTraslados=listaFull.reduce((a,u)=>a+u.cant,0);
@@ -3338,6 +3342,7 @@ function renderIndicadorTraslados(){
       '<div class="stat"><div class="label">Usuarios que trasladaron</div><div class="value">'+fmtInt(listaFull.length)+'</div></div>'+
       '<div class="stat"><div class="label">Líneas Pareto</div><div class="value">'+fmtInt(filas.filter(r=>r.moleculaPareto==='PARETO').length)+'</div></div>'+
       '<div class="stat"><div class="label">Líneas No Pareto</div><div class="value">'+fmtInt(filas.filter(r=>r.moleculaPareto==='NO PARETO').length)+'</div></div>'+
+      '<div class="stat"><div class="label">Líneas no homologadas</div><div class="value">'+fmtInt(sinClasificar)+'</div></div>'+
       '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
         (fechas.length ? escHtml(dateToISO(fechas[0])+' → '+dateToISO(fechas[fechas.length-1])) : '—')+'</div></div>';
   }
@@ -3356,7 +3361,7 @@ function renderIndicadorTraslados(){
   const lista = busca ? listaFull.filter(u=>normValue(u.usuario).includes(busca)) : listaFull;
 
   if(!lista.length){
-    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados para los filtros seleccionados.</td></tr>';
+    tb.innerHTML='<tr><td colspan="10" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados para los filtros seleccionados.</td></tr>';
     return;
   }
 
@@ -3369,13 +3374,23 @@ function renderIndicadorTraslados(){
     '<td><b>'+fmtInt(u.cant)+'</b></td>'+
     '<td>'+fmtInt(u.pareto)+'</td>'+
     '<td>'+fmtInt(u.noPareto)+'</td>'+
+    '<td><b>'+fmtInt(u.lineas)+'</b></td>'+
+    '<td>'+fmtInt(u.linPareto)+'</td>'+
+    '<td>'+fmtInt(u.linNoPareto)+'</td>'+
+    '<td>'+fmtInt(u.linNoHom)+'</td>'+
     '<td>'+fmtPct(totalTraslados?u.cant/totalTraslados:null)+'</td></tr>'
   ).join('');
   const sum=lista.reduce((a,u)=>a+u.cant,0);
   const sumP=lista.reduce((a,u)=>a+u.pareto,0);
   const sumNP=lista.reduce((a,u)=>a+u.noPareto,0);
+  const sumL=lista.reduce((a,u)=>a+u.lineas,0);
+  const sumLP=lista.reduce((a,u)=>a+u.linPareto,0);
+  const sumLNP=lista.reduce((a,u)=>a+u.linNoPareto,0);
+  const sumLNH=lista.reduce((a,u)=>a+u.linNoHom,0);
   h+='<tr class="total-row"><td>—</td><td class="txt">TOTAL ('+lista.length+(lista.length===1?' usuario)':' usuarios)')+'</td>'+
-     '<td>'+fmtInt(sum)+'</td><td>'+fmtInt(sumP)+'</td><td>'+fmtInt(sumNP)+'</td><td>'+fmtPct(totalTraslados?sum/totalTraslados:null)+'</td></tr>';
+     '<td>'+fmtInt(sum)+'</td><td>'+fmtInt(sumP)+'</td><td>'+fmtInt(sumNP)+'</td>'+
+     '<td>'+fmtInt(sumL)+'</td><td>'+fmtInt(sumLP)+'</td><td>'+fmtInt(sumLNP)+'</td><td>'+fmtInt(sumLNH)+'</td>'+
+     '<td>'+fmtPct(totalTraslados?sum/totalTraslados:null)+'</td></tr>';
   tb.innerHTML=h;
 }
 
@@ -4290,7 +4305,10 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
       'Traslados realizados': u.cant,
       'Pareto': u.pareto,
       'No Pareto': u.noPareto,
-      'Líneas de artículo': u.lineas,
+      'Líneas totales': u.lineas,
+      'Líneas Pareto': u.linPareto,
+      'Líneas No Pareto': u.linNoPareto,
+      'Líneas no homologadas': u.linNoHom,
       '% del total': total ? u.cant/total : 0
     }));
 
