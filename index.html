@@ -1283,6 +1283,19 @@ function mapRowToFields(rawRow, headerIndex, fieldsDef){
 // Completa en una fila ya guardada los campos que estén vacíos usando una fila
 // recién leída del archivo. Sirve para "reparar" el acumulado histórico cuando se
 // agregan columnas nuevas (Estado, Usuario Creación) que antes no se guardaban.
+// Cuando una MISMA línea se vuelve a cargar y ahora sí trae soporte (antes 0 / "NO TIENE"),
+// guardamos el soporte nuevo y la fecha del cargue en el que apareció. Eso permite el
+// Reporte Comparativo Periódico de "soportes recuperados" entre cargues.
+function registrarSoporteRecuperado(destino, origen, fechaISO){
+  const nuevo = toNumber(origen.soportes);
+  const actual = toNumber(destino.soportes);
+  if(nuevo>0 && actual===0){
+    destino.soportes = origen.soportes;
+    destino._fechaSoporte = fechaISO;
+    return true;
+  }
+  return false;
+}
 function completarCamposFaltantes(destino, origen){
   let cambios=0;
   for (const f in origen){
@@ -1900,7 +1913,7 @@ async function syncReporteFromDrive() {
     const merged = prevRows.slice();
     const batches = prevBatches.slice();
 
-    let totalAdded = 0, totalSkipped = 0, totalReparadas = 0, lastFileName = '';
+    let totalAdded = 0, totalSkipped = 0, totalReparadas = 0, totalSoportesNuevos = 0, lastFileName = '';
 
     for (let i = 0; i < ordered.length; i++) {
       const f = ordered[i];
@@ -1919,7 +1932,8 @@ async function syncReporteFromDrive() {
       }
       if (!rows || !rows.length) continue;
 
-      let added = 0, skipped = 0, reparadas = 0;
+      let added = 0, skipped = 0, reparadas = 0, soportesNuevos = 0;
+      const nowISO = new Date().toISOString();
       for (let j = 0; j < rows.length; j++) {
         const k = dedupKeyFor(KEY, rows[j]);
         if (seen.has(k)) {
@@ -1927,11 +1941,14 @@ async function syncReporteFromDrive() {
           // La fila ya estaba guardada: completamos los campos que estén vacíos
           // (Estado, Usuario Creación, etc.) para no perder datos del acumulado antiguo.
           if (completarCamposFaltantes(seen.get(k), rows[j])) reparadas++;
+          // Si la línea ahora llega CON soporte y antes estaba en 0, lo registramos.
+          if (registrarSoporteRecuperado(seen.get(k), rows[j], nowISO)) soportesNuevos++;
           continue;
         }
+        rows[j]._fechaCargue = nowISO;
         seen.set(k, rows[j]); merged.push(rows[j]); added++;
       }
-      totalAdded += added; totalSkipped += skipped; totalReparadas += reparadas;
+      totalAdded += added; totalSkipped += skipped; totalReparadas += reparadas; totalSoportesNuevos += soportesNuevos;
       lastFileName = f.name;
 
       // Solo registramos un "cargue" si aportó filas nuevas
@@ -1950,6 +1967,7 @@ async function syncReporteFromDrive() {
     showToast('"' + def.title + '" sincronizado desde Drive: +' + fmtInt(totalAdded) + ' filas nuevas'
       + (totalSkipped ? (' (' + fmtInt(totalSkipped) + ' ya existían, se omitieron)') : '')
       + (totalReparadas ? (' · ' + fmtInt(totalReparadas) + ' filas actualizadas con Estado/Usuario') : '')
+      + (totalSoportesNuevos ? (' · ' + fmtInt(totalSoportesNuevos) + ' líneas que ahora SÍ traen soporte') : '')
       + '. Total acumulado: ' + fmtInt(merged.length) + ' filas.');
 
     await refreshStatusFromDB();
@@ -2334,23 +2352,25 @@ async function handleFileSelected(key,file){
       prevRows.forEach(r => { const k = dedupKeyFor(key, r); if(!seen.has(k)) seen.set(k, r); });
       const merged = prevRows.slice();
       const nowISO = new Date().toISOString();
-      let added=0, skipped=0, reparadas=0;
+      let added=0, skipped=0, reparadas=0, soportesNuevos=0;
       rows.forEach(r=>{
         const k=dedupKeyFor(key,r);
         if(seen.has(k)){
           skipped++;
           // Fila ya guardada: rellenamos los campos vacíos (Estado, Usuario Creación...)
           if(completarCamposFaltantes(seen.get(k), r)) reparadas++;
+          // ¿La línea llegó ahora CON soporte cuando antes estaba en 0 / NO TIENE?
+          if(key==='reporte' && registrarSoporteRecuperado(seen.get(k), r, nowISO)) soportesNuevos++;
           return;
         }
-        // Para "avances" guardamos la fecha de cargue en cada fila: sirve para el
-        // Reporte Comparativo Periódico (cortes de 1-10 / 11-20 / 21-31).
-        if(key==='avances') r._fechaCargue = nowISO;
+        // Guardamos la fecha de cargue en cada fila: sirve para el Reporte Comparativo
+        // Periódico (cortes de 1-10 / 11-20 / 21-31) tanto de avances como de soportes.
+        r._fechaCargue = nowISO;
         seen.set(k, r); merged.push(r); added++;
       });
       const batches = prevBatches.concat([{fileName:file.name, rowCount:rows.length, addedCount:added, skippedCount:skipped, uploadedAt:new Date().toISOString()}]);
       await idbPut({key, rows:merged, fileName:file.name, batches, updatedAt:new Date().toISOString()});
-      showToast('"'+def.title+'": +'+fmtInt(added)+' filas nuevas'+(skipped?(' ('+fmtInt(skipped)+' ya existían, se omitieron)'):'')+(reparadas?(' · '+fmtInt(reparadas)+' filas actualizadas con Estado/Usuario'):'')+'. Total acumulado: '+fmtInt(merged.length)+' filas.');
+      showToast('"'+def.title+'": +'+fmtInt(added)+' filas nuevas'+(skipped?(' ('+fmtInt(skipped)+' ya existían, se omitieron)'):'')+(reparadas?(' · '+fmtInt(reparadas)+' filas actualizadas con Estado/Usuario'):'')+(soportesNuevos?(' · '+fmtInt(soportesNuevos)+' líneas que ahora SÍ traen soporte'):'')+'. Total acumulado: '+fmtInt(merged.length)+' filas.');
     }else{
       await idbPut({key, rows, fileName:file.name, updatedAt:new Date().toISOString()});
       showToast('"'+def.title+'" cargado: '+fmtInt(rows.length)+' filas.');
@@ -2477,6 +2497,10 @@ async function calcularIndicadores(){
       const sePuedeSubsanarBodega = Math.abs(diferencia) <= existenciaBodega ? 'SI':'NO';
       const soportes=toNumber(r.soportes);
       const tieneSoportes = soportes===0 ? 'NO TIENE SOPORTES':'TIENE SOPORTE';
+      // Fecha del cargue en que entró la línea y fecha del cargue en que apareció el soporte
+      // (solo si antes venía en 0). Se usan en el Reporte Comparativo Periódico.
+      const fechaCargue=String(r._fechaCargue||'');
+      const fechaSoporte=String(r._fechaSoporte||'');
       const documento=String(r.documento||'').trim();
       const contrato=normValue(r.contrato);
       const eps=corregirEps(r.eps);
@@ -2490,7 +2514,8 @@ async function calcularIndicadores(){
         estadoDispensa, usuarioCreacion, codigoCie10,
         unidades, cantidadAutorizada, diferencia, lineaPendiente, bodegaDetalle, bodegaNorm,
         zona: bodegaToZona.get(bodegaNorm) || 'N/D',
-        existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes
+        existenciaPunto, existenciaBodega, sePuedeSubsanarPunto, sePuedeSubsanarBodega, tieneSoportes,
+        fechaCargue, fechaSoporte
       };
     });
 
@@ -3896,6 +3921,21 @@ function getPeriodoDeCarga(iso){
   const day=d.getUTCDate();
   return day<=10 ? 1 : (day<=20 ? 2 : 3);
 }
+// ¿La dispensa/línea ya tenía soporte al cierre del corte indicado?
+// - Si el soporte venía desde el primer cargue -> cuenta en todos los cortes.
+// - Si el soporte apareció en un cargue posterior (antes venía en 0 / NO TIENE) ->
+//   cuenta solo desde el corte en que se cargó el soporte.
+function tieneSoporteHastaCorte(r, corteMax){
+  if(r.tieneSoportes!=='TIENE SOPORTE') return false;
+  if(!r.fechaSoporte) return true;
+  const p=getPeriodoDeCarga(r.fechaSoporte);
+  return p===null ? true : p<=corteMax;
+}
+// Corte en el que la línea recuperó el soporte (null si nunca estuvo en 0).
+function corteRecuperacionSoporte(r){
+  if(r.tieneSoportes!=='TIENE SOPORTE' || !r.fechaSoporte) return null;
+  return getPeriodoDeCarga(r.fechaSoporte);
+}
 // Estado ACUMULADO de cada línea/documento considerando solo los avances cuya fecha de
 // cargue cae en un corte <= corteMax (es decir, "todo lo subsanado hasta ese corte").
 function calcularEstadoHastaCorte(rows, avancesRaw, corteMax){
@@ -3923,13 +3963,16 @@ function calcularEstadoHastaCorte(rows, avancesRaw, corteMax){
 }
 function buildCorteMetrics(rows, avancesRaw){
   const out={};
-  [1,2,3].forEach(corte=>{
+  // El corte 0 es la foto inicial (sin ningún avance aplicado): sirve de línea base
+  // para medir qué se subsanó en cada corte posterior.
+  [0,1,2,3].forEach(corte=>{
     const {lineaPend, docPend} = calcularEstadoHastaCorte(rows, avancesRaw, corte);
     const byBodega=new Map();
     rows.forEach(r=>{
       if(!byBodega.has(r.bodegaDetalle)) byBodega.set(r.bodegaDetalle, {
         bodega:r.bodegaDetalle, zona:r.zona, docsSet:new Set(), docsEntSet:new Set(),
-        lineas:0, lineasEnt:0, eventoSet:new Set(), eventoConSet:new Set(), eventoSinSet:new Set()
+        lineas:0, lineasEnt:0, eventoSet:new Set(), eventoConSet:new Set(), eventoSinSet:new Set(),
+        eventoRecSet:new Set(), eventoRecAcumSet:new Set()
       });
       const g=byBodega.get(r.bodegaDetalle);
       if(r.documento){
@@ -3938,7 +3981,12 @@ function buildCorteMetrics(rows, avancesRaw){
           g.docsEntSet.add(r.documento);
           if(r.contrato==='EVENTO'){
             g.eventoSet.add(r.documento);
-            if(r.tieneSoportes==='TIENE SOPORTE') g.eventoConSet.add(r.documento); else g.eventoSinSet.add(r.documento);
+            if(tieneSoporteHastaCorte(r, corte)) g.eventoConSet.add(r.documento); else g.eventoSinSet.add(r.documento);
+            const cRec=corteRecuperacionSoporte(r);
+            if(cRec!==null && cRec<=corte){
+              g.eventoRecAcumSet.add(r.documento);
+              if(cRec===corte) g.eventoRecSet.add(r.documento);
+            }
           }
         }
       }
@@ -3949,7 +3997,8 @@ function buildCorteMetrics(rows, avancesRaw){
       bodega:g.bodega, zona:g.zona,
       docsTotal:g.docsSet.size, docsEnt:g.docsEntSet.size, docsPend:g.docsSet.size-g.docsEntSet.size,
       lineasTotal:g.lineas, lineasEnt:g.lineasEnt, lineasPend:g.lineas-g.lineasEnt,
-      eventoTotal:g.eventoSet.size, eventoCon:g.eventoConSet.size, eventoSin:g.eventoSinSet.size
+      eventoTotal:g.eventoSet.size, eventoCon:g.eventoConSet.size, eventoSin:g.eventoSinSet.size,
+      eventoRec:g.eventoRecSet.size, eventoRecAcum:g.eventoRecAcumSet.size
     })).sort((a,b)=>(a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es'));
   });
   return out;
@@ -4016,6 +4065,12 @@ function renderReportePeriodico(){
   const labelPend = periodicoTabActual==='documento' ? 'Pendientes' : periodicoTabActual==='linea' ? 'Pendientes' : 'Sin soporte';
   const fieldA = periodicoTabActual==='documento' ? 'docsEnt' : periodicoTabActual==='linea' ? 'lineasEnt' : 'eventoCon';
   const fieldB = periodicoTabActual==='documento' ? 'docsPend' : periodicoTabActual==='linea' ? 'lineasPend' : 'eventoSin';
+  const labelRec = periodicoTabActual==='documento' ? 'Dispensas recuperadas' : periodicoTabActual==='linea' ? 'Líneas recuperadas' : 'Soportes recuperados';
+  const explicaRec = periodicoTabActual==='soporte'
+    ? 'Dispensas de EVENTO que en un cargue anterior venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte.'
+    : (periodicoTabActual==='documento'
+        ? 'Dispensas que estaban pendientes y en un cargue posterior quedaron entregadas: bajan el índice de pendientes y suben la eficiencia por dispensa.'
+        : 'Líneas que estaban pendientes y en un cargue posterior quedaron entregadas: bajan el índice de pendientes y suben la eficiencia por línea.');
 
   // ---- construir cabeceras dinámicas: Bodega + cols propias del corte + cols de los otros cortes ----
   let html='<div class="corte-grid">';
@@ -4091,6 +4146,45 @@ function renderReportePeriodico(){
       </div>
     </div>`;
 
+  // ---- comparativo periódico de lo RECUPERADO entre cargues ----
+  const bodegasRec=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))]
+    .sort((a,b)=>String(a).localeCompare(String(b),'es'));
+  const findEntry=(corte,bodega)=>metrics[corte].find(x=>x.bodega===bodega);
+  const recRows=bodegasRec.map(bodega=>{
+    const base=(findEntry(0,bodega)||{})[fieldB]||0;
+    const rec=[1,2,3].map(corte=>{
+      if(periodicoTabActual==='soporte') return (findEntry(corte,bodega)||{}).eventoRec||0;
+      const prev=(findEntry(corte-1,bodega)||{})[fieldB]||0;
+      const cur=(findEntry(corte,bodega)||{})[fieldB]||0;
+      return Math.max(0, prev-cur);
+    });
+    const total=rec.reduce((a,b)=>a+b,0);
+    const restante=periodicoTabActual==='soporte'
+      ? ((findEntry(3,bodega)||{}).eventoSin||0)
+      : ((findEntry(3,bodega)||{})[fieldB]||0);
+    return {bodega, base, rec, total, restante, pct: base? total/base : null};
+  }).filter(t=>t.base||t.total||t.restante);
+  const recTot=[0,0,0]; let recBase=0, recTotal=0, recRest=0;
+  recRows.forEach(t=>{ recTot[0]+=t.rec[0]; recTot[1]+=t.rec[1]; recTot[2]+=t.rec[2]; recBase+=t.base; recTotal+=t.total; recRest+=t.restante; });
+  const recFilas=recRows.map(t=>'<tr><td class="txt">'+escHtml(t.bodega)+'</td><td>'+fmtInt(t.base)+'</td><td>'+fmtInt(t.rec[0])+'</td><td>'+fmtInt(t.rec[1])+'</td><td>'+fmtInt(t.rec[2])+'</td><td>'+fmtInt(t.total)+'</td><td>'+fmtInt(t.restante)+'</td><td class="'+effClass(t.pct)+'">'+fmtPct(t.pct)+'</td></tr>').join('');
+  const recFilaTotal='<tr class="total-row"><td class="txt">TOTAL</td><td>'+fmtInt(recBase)+'</td><td>'+fmtInt(recTot[0])+'</td><td>'+fmtInt(recTot[1])+'</td><td>'+fmtInt(recTot[2])+'</td><td>'+fmtInt(recTotal)+'</td><td>'+fmtInt(recRest)+'</td><td>'+fmtPct(recBase?recTotal/recBase:null)+'</td></tr>';
+  const baseLabel = periodicoTabActual==='soporte' ? 'Sin soporte inicial' : 'Pendientes inicial';
+  const restLabel = periodicoTabActual==='soporte' ? 'Sin soporte hoy' : 'Pendientes hoy';
+  html+='<div class="corte-card" style="grid-column:1/-1;">'
+    +'<h4>Comparativo Periódico — '+labelRec+'</h4>'
+    +'<p style="margin:0 0 12px;color:var(--ink-soft);font-size:12px;line-height:1.5;">'+explicaRec+'</p>'
+    +'<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">'
+    +'<svg width="170" height="170" viewBox="0 0 200 200" id="periodicoDonutRecuperados"></svg>'
+    +'<div style="flex:1;min-width:260px;">'
+    +'<div class="legend" style="margin:0 0 10px;">'
+    +'<div class="item"><span class="sw" style="background:#1E8F5E;"></span>'+labelRec+'<span class="val">'+fmtInt(recTotal)+'</span></div>'
+    +'<div class="item"><span class="sw" style="background:#D98A2B;"></span>'+restLabel+'<span class="val">'+fmtInt(recRest)+'</span></div>'
+    +'</div>'
+    +'<div class="table-wrap" style="max-height:300px;">'
+    +'<table class="data"><thead><tr><th>Bodega</th><th>'+baseLabel+'</th><th>Recup. Corte 1</th><th>Recup. Corte 2</th><th>Recup. Corte 3</th><th>Total recuperado</th><th>'+restLabel+'</th><th>% recuperación</th></tr></thead>'
+    +'<tbody>'+(recFilas ? recFilas+recFilaTotal : '<tr><td colspan="8" class="txt" style="text-align:center;color:#9CA9B6;">Aún no hay recuperaciones entre cargues</td></tr>')+'</tbody></table>'
+    +'</div></div></div></div>';
+
   html+='</div>';
   document.getElementById('periodicoContent').innerHTML=html;
 
@@ -4105,6 +4199,9 @@ function renderReportePeriodico(){
   // ---- donut consolidado ----
   const cA=consolA.reduce((a,b)=>a+b,0), cB=consolB.reduce((a,b)=>a+b,0);
   drawDonut('periodicoDonutConsolidado', [{label:'',value:cA,color:'#1E8F5E'},{label:'',value:cB,color:'#D98A2B'}], fmtPct(cA+cB?cA/(cA+cB):null));
+
+  // ---- donut de recuperados entre cargues ----
+  drawDonut('periodicoDonutRecuperados', [{label:'',value:recTotal,color:'#1E8F5E'},{label:'',value:recRest,color:'#D98A2B'}], fmtPct(recTotal+recRest?recTotal/(recTotal+recRest):null));
 }
 
 /* =========================================================================
