@@ -3568,6 +3568,50 @@ function renderIndicadorTraslados(){
    Filtro propio: Punto de venta (no afecta al resto de la pantalla).
    ========================================================================= */
 let _facturasPuntoCache=[];
+let _facturasStandalone=[];        // facturas listas para verse sin haber pulsado "Calcular indicadores"
+let _facturasStandaloneLoading=false;
+
+/* La sección funciona en cuanto la tabla Facturas está sincronizada desde Drive:
+   si todavía no se han recalculado los indicadores, se lee la tabla guardada en el
+   navegador y se cruza con Homólogo aquí mismo. */
+async function ensureFacturasData(){
+  if(state.processed && state.processed.facturas && state.processed.facturas.length) return;
+  if(_facturasStandaloneLoading) return;
+  _facturasStandaloneLoading=true;
+  try{
+    const recF=await idbGet('facturas');
+    const filas=(recF && recF.rows) ? recF.rows : [];
+    if(!filas.length){ _facturasStandalone=[]; return; }
+    const recH=await idbGet('homologo');
+    const homSet=new Set();
+    ((recH && recH.rows) ? recH.rows : []).forEach(r=>{ const c=normValue(r.codigo); if(c) homSet.add(c); });
+    _facturasStandalone=filas.map(r=>{
+      const codigo=normValue(r.codigo);
+      return {
+        fechaFactura: toDateSafe(r.fechaFactura),
+        factura: String(r.factura||'').trim(),
+        codigo,
+        descripcion: String(r.descripcion||'').trim(),
+        cantidad: toNumber(r.cantidad),
+        puntoVenta: String(r.puntoVenta||'').trim() || 'SIN PUNTO DE VENTA',
+        tieneHomologo: homSet.has(codigo)
+      };
+    });
+    const puntos=Array.from(new Set(_facturasStandalone.map(r=>r.puntoVenta).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+    const sel=document.getElementById('fFacturaPunto');
+    if(sel && sel.options.length<=1){
+      const prev=sel.value||'';
+      sel.innerHTML='<option value="">Todos los puntos de venta</option>'+puntos.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+      sel.value = puntos.includes(prev) ? prev : '';
+    }
+  }catch(e){ console.warn('No se pudo leer la tabla Facturas:', e); }
+  finally{ _facturasStandaloneLoading=false; }
+}
+function getFacturasRows(){
+  const p=state.processed;
+  if(p && p.facturas && p.facturas.length) return p.facturas;
+  return _facturasStandalone;
+}
 
 function populateFacturasFilters(){
   const p=state.processed; if(!p) return;
@@ -3581,16 +3625,24 @@ function populateFacturasFilters(){
   renderInfoPorFactura();
 }
 
+function facturasStatCardsHTML(cod, hom, noHom){
+  return '<div class="stat"><div class="label">Cantidad de códigos</div><div class="value">'+fmtInt(cod)+'</div>'+
+         '<div class="sub">códigos distintos facturados</div></div>'+
+         '<div class="stat"><div class="label">Códigos homologados</div><div class="value">'+fmtInt(hom)+'</div>'+
+         '<div class="sub">'+fmtPct(cod?hom/cod:null)+' del total</div></div>'+
+         '<div class="stat"><div class="label">Códigos NO homologados</div><div class="value">'+fmtInt(noHom)+'</div>'+
+         '<div class="sub">'+fmtPct(cod?noHom/cod:null)+' del total</div></div>';
+}
+
 function renderInfoPorFactura(){
   const tb=document.querySelector('#tblFacturasPunto tbody');
   if(!tb) return;
-  const p=state.processed;
-  const all=(p && p.facturas) ? p.facturas : [];
+  const all=getFacturasRows();
   const statsEl=document.getElementById('statsFacturas');
   const diagEl=document.getElementById('facturasDiag');
 
   if(!all.length){
-    if(statsEl) statsEl.innerHTML='';
+    if(statsEl) statsEl.innerHTML=facturasStatCardsHTML(0,0,0);
     if(diagEl){
       diagEl.style.display='';
       diagEl.innerHTML='<b>Sin datos de facturas.</b> Ve a la pestaña de cargue, sincroniza la tarjeta <b>Facturas</b> desde Google Drive y vuelve a calcular los indicadores.';
@@ -3633,13 +3685,10 @@ function renderInfoPorFactura(){
 
   if(statsEl){
     statsEl.innerHTML =
+      facturasStatCardsHTML(codigosGlobal.size, codigosHomGlobal.size, codigosNoHomGlobal.size)+
       '<div class="stat"><div class="label">Facturas</div><div class="value">'+fmtInt(facturasUnicas)+'</div>'+
       '<div class="sub">'+fmtInt(filas.length)+' líneas facturadas</div></div>'+
       '<div class="stat"><div class="label">Puntos de venta</div><div class="value">'+fmtInt(lista.length)+'</div></div>'+
-      '<div class="stat"><div class="label">Códigos distintos</div><div class="value">'+fmtInt(codigosGlobal.size)+'</div></div>'+
-      '<div class="stat"><div class="label">Códigos homologados</div><div class="value">'+fmtInt(codigosHomGlobal.size)+'</div>'+
-      '<div class="sub">'+fmtPct(codigosGlobal.size?codigosHomGlobal.size/codigosGlobal.size:null)+' del total</div></div>'+
-      '<div class="stat"><div class="label">Códigos sin homólogo</div><div class="value">'+fmtInt(codigosNoHomGlobal.size)+'</div></div>'+
       '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
         (fechas.length ? escHtml(dateToISO(fechas[0])+' → '+dateToISO(fechas[fechas.length-1])) : '—')+'</div></div>';
   }
@@ -3689,8 +3738,7 @@ function renderInfoPorFactura(){
   const btn=document.getElementById('btnDescargarSinHomologo');
   if(!btn) return;
   btn.addEventListener('click', ()=>{
-    const p=state.processed;
-    const all=(p && p.facturas) ? p.facturas : [];
+    const all=getFacturasRows();
     if(!all.length){ showToast('No hay facturas cargadas para exportar.', true); return; }
 
     const punto=(document.getElementById('fFacturaPunto')||{}).value||'';
@@ -4903,7 +4951,10 @@ document.querySelectorAll('.result-tabs button').forEach(b=>{
     b.classList.add('active');
     document.querySelectorAll('.subview').forEach(v=>v.classList.remove('active'));
     document.getElementById('sub-'+b.dataset.sub).classList.add('active');
-    if(b.dataset.sub==='facturas' && typeof renderInfoPorFactura==='function') renderInfoPorFactura();
+    if(b.dataset.sub==='facturas' && typeof renderInfoPorFactura==='function'){
+      renderInfoPorFactura();
+      if(typeof ensureFacturasData==='function') ensureFacturasData().then(()=>renderInfoPorFactura());
+    }
     if(b.dataset.sub==='traslados' && typeof renderIndicadorTraslados==='function') renderIndicadorTraslados();
   });
 });
@@ -5262,6 +5313,10 @@ function renderReportePeriodico(){
   renderUploadCards(); updateTopStatus(); updateCalcButton();
   startFirestoreListener();
   showEmptyResults();
+  if(typeof ensureFacturasData==='function'){
+    await ensureFacturasData();
+    if(typeof renderInfoPorFactura==='function') renderInfoPorFactura();
+  }
 })();
 </script>
 </body>
