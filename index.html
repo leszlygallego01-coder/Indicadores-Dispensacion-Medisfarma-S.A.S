@@ -530,6 +530,9 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <svg id="pieDispensa" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="pieLegend"></div>
             <button class="btn btn-ghost" id="btnDescargarImagenDispensa" style="margin-top:12px;width:100%;padding:7px 10px;font-size:12px;">🖼 Descargar imagen del indicador</button>
+            <button class="btn btn-ghost" id="btnImagenTopEficiencia" style="margin-top:8px;width:100%;padding:7px 10px;font-size:12px;">🏆 Imagen Top 20 mejor eficiencia</button>
+            <button class="btn btn-ghost" id="btnImagenTopPendiente" style="margin-top:8px;width:100%;padding:7px 10px;font-size:12px;">⚠ Imagen Top 20 mayor índice pendiente</button>
+            <p class="seg-desc" style="margin:8px 0 0;font-size:11px;">Las imágenes del Top 20 incluyen la zona, las 20 bodegas detalle y el gráfico general de ese grupo.</p>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
             <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las marcadas como INACTIVO se excluyen (ver pestaña <i>Dispensas Inactivas</i>). &nbsp;<b>Orden:</b> bodegas ordenadas por <b>Índice pendiente</b> de mayor a menor (las más críticas primero).</p>
@@ -3716,6 +3719,167 @@ function descargarImagenIndicadorDispensa(){
   showToast('Imagen del indicador de dispensa descargada.');
 }
 document.getElementById('btnDescargarImagenDispensa').addEventListener('click', descargarImagenIndicadorDispensa);
+
+/* ---- Imagen PNG del Top 20 de bodegas detalle (Reporte de Dispensacion) ----
+   modo='eficiencia' -> mejores indicadores de eficiencia (mayor a menor)
+   modo='pendiente'  -> indices de pendientes mas altos (mayor a menor)
+   La imagen incluye la zona, las 20 bodegas detalle del top y el grafico
+   general (dona agregada) de ese grupo de bodegas. */
+function descargarImagenTopBodegasDispensa(modo){
+  const tabla = (lastTables && lastTables.dispensa) ? lastTables.dispensa : null;
+  if(!tabla || !tabla.length){ showToast('Primero calcula los indicadores.', true); return; }
+
+  // Solo bodegas con dispensas activas: sin dispensas no hay indicador comparable.
+  const base = tabla.filter(t => (t.dispensas||0) > 0);
+  if(!base.length){ showToast('No hay bodegas con dispensas activas para el filtro actual.', true); return; }
+
+  const esEf = (modo === 'eficiencia');
+  const orden = base.slice().sort((a,b)=>{
+    const va = esEf ? (a.efDispensa||0) : (a.pendDispensa||0);
+    const vb = esEf ? (b.efDispensa||0) : (b.pendDispensa||0);
+    if(Math.abs(vb-va) > 1e-12) return vb-va;
+    if((b.dispensas||0) !== (a.dispensas||0)) return (b.dispensas||0)-(a.dispensas||0);
+    return (a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es');
+  });
+  const top = orden.slice(0, 20);
+
+  const zonaSel = document.getElementById('fZona').value || 'Todas las zonas';
+  const titulo = esEf ? 'Top 20 bodegas detalle · Mejor indicador de eficiencia'
+                      : 'Top 20 bodegas detalle · Mayor índice de pendientes';
+  const criterio = esEf ? 'Ordenado por indicador de eficiencia, de mayor a menor.'
+                        : 'Ordenado por índice de pendientes, de mayor a menor.';
+  const acento = esEf ? '#1E8F5E' : '#D98A2B';
+
+  const tD=sumField(top,'dispensas'), tE=sumField(top,'dispensasEntregadas'), tP=sumField(top,'dispensasPendientes');
+  const efG = tD ? tE/tD : 0;
+  const pendG = tD ? 1-efG : 0;
+
+  const rowH=23, headH=150, filasY=headH+34;
+  const W=1020, H=filasY + rowH*top.length + 56, scale=2;
+  const cv=document.createElement('canvas');
+  cv.width=W*scale; cv.height=H*scale;
+  const ctx=cv.getContext('2d');
+  ctx.scale(scale,scale);
+
+  ctx.fillStyle='#FFFFFF'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#D8E2EC'; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,W-1,H-1);
+  ctx.fillStyle='#063C6B'; ctx.fillRect(0,0,W,6);
+
+  // Encabezado
+  ctx.fillStyle='#063C6B'; ctx.font='bold 21px Georgia, serif';
+  ctx.fillText(titulo, 28, 48);
+  ctx.fillStyle='#5C6C7E'; ctx.font='13px Arial, sans-serif';
+  ctx.fillText('Zona: '+zonaSel, 28, 74);
+  ctx.fillText(criterio, 28, 94);
+  const hoy=new Date();
+  ctx.fillText('Generado: '+hoy.toISOString().slice(0,10)+'  ·  Bodegas evaluadas: '+fmtInt(base.length), 28, 114);
+
+  // Grafico general (dona) del grupo de bodegas del top
+  const cx=W-118, cy=88, rOut=58, rIn=34;
+  const slices=[{v:efG,c:'#1E8F5E'},{v:pendG,c:'#D98A2B'}];
+  const tot=slices.reduce((a,b)=>a+(b.v||0),0) || 1;
+  let start=-Math.PI/2;
+  slices.forEach(s=>{
+    const ang=((s.v||0)/tot)*Math.PI*2;
+    if(ang<=0) return;
+    ctx.beginPath();
+    ctx.arc(cx,cy,rOut,start,start+ang,false);
+    ctx.arc(cx,cy,rIn,start+ang,start,true);
+    ctx.closePath();
+    ctx.fillStyle=s.c; ctx.fill();
+    start+=ang;
+  });
+  ctx.textAlign='center';
+  ctx.fillStyle='#063C6B'; ctx.font='bold 18px Consolas, monospace';
+  ctx.fillText(((esEf?efG:pendG)*100).toFixed(1)+'%', cx, cy+6);
+  ctx.font='10px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
+  ctx.fillText(esEf?'Eficiencia':'Pendiente', cx, cy+21);
+  ctx.textAlign='left';
+
+  // Resumen general del top 20 (a la izquierda de la dona)
+  const rx=W-330; let ry=44;
+  ctx.font='bold 12px Arial, sans-serif'; ctx.fillStyle='#063C6B';
+  ctx.fillText('General del Top 20', rx, ry); ry+=19;
+  ctx.font='12px Arial, sans-serif';
+  const resumen=[
+    ['Dispensas totales', fmtInt(tD)],
+    ['Entregadas', fmtInt(tE)],
+    ['Pendientes', fmtInt(tP)],
+    ['Eficiencia / Pendiente', fmtPct(efG)+' / '+fmtPct(pendG)]
+  ];
+  resumen.forEach(p=>{
+    ctx.fillStyle='#5C6C7E'; ctx.fillText(p[0], rx, ry);
+    ctx.fillStyle='#1B2733'; ctx.font='bold 12px Consolas, monospace';
+    ctx.fillText(p[1], rx+150, ry);
+    ctx.font='12px Arial, sans-serif';
+    ry+=18;
+  });
+
+  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(28,headH-24); ctx.lineTo(W-28,headH-24); ctx.stroke();
+
+  // Cabecera de la tabla
+  const colX=[36, 66, 210, 470, 560, 650, 750, 880];
+  ctx.fillStyle='#F2F7FB'; ctx.fillRect(28, headH-16, W-56, 26);
+  ctx.fillStyle='#063C6B'; ctx.font='bold 11.5px Arial, sans-serif';
+  ctx.fillText('#', colX[0], headH+2);
+  ctx.fillText('Zona', colX[1], headH+2);
+  ctx.fillText('Bodega detalle', colX[2], headH+2);
+  ctx.textAlign='right';
+  ctx.fillText('Total', colX[3]+50, headH+2);
+  ctx.fillText('Entregadas', colX[4]+80, headH+2);
+  ctx.fillText('Pendientes', colX[5]+80, headH+2);
+  ctx.fillText('Eficiencia', colX[6]+90, headH+2);
+  ctx.fillText('Índice pend.', colX[7]+100, headH+2);
+  ctx.textAlign='left';
+
+  const corta=(txt, max)=>{
+    let s=String(txt||'');
+    if(ctx.measureText(s).width<=max) return s;
+    while(s.length>3 && ctx.measureText(s+'…').width>max) s=s.slice(0,-1);
+    return s+'…';
+  };
+
+  // Filas del top
+  let y=filasY+11;
+  top.forEach((t,i)=>{
+    if(i%2===1){ ctx.fillStyle='#FAFCFE'; ctx.fillRect(28, y-15, W-56, rowH); }
+    ctx.font='11.5px Arial, sans-serif';
+    ctx.fillStyle='#9CA9B6'; ctx.fillText(String(i+1), colX[0], y);
+    ctx.fillStyle='#5C6C7E'; ctx.fillText(corta(t.zona, 135), colX[1], y);
+    ctx.fillStyle='#1B2733'; ctx.font='bold 11.5px Arial, sans-serif';
+    ctx.fillText(corta(t.bodega, 250), colX[2], y);
+    ctx.font='11.5px Consolas, monospace'; ctx.textAlign='right';
+    ctx.fillStyle='#1B2733';
+    ctx.fillText(fmtInt(t.dispensas), colX[3]+50, y);
+    ctx.fillText(fmtInt(t.dispensasEntregadas), colX[4]+80, y);
+    ctx.fillText(fmtInt(t.dispensasPendientes), colX[5]+80, y);
+    ctx.fillStyle= esEf ? acento : '#5C6C7E';
+    ctx.font=(esEf?'bold ':'')+'11.5px Consolas, monospace';
+    ctx.fillText(fmtPct(t.efDispensa), colX[6]+90, y);
+    ctx.fillStyle= esEf ? '#5C6C7E' : acento;
+    ctx.font=(esEf?'':'bold ')+'11.5px Consolas, monospace';
+    ctx.fillText(fmtPct(t.pendDispensa), colX[7]+100, y);
+    ctx.textAlign='left';
+    ctx.strokeStyle='#EEF3F8'; ctx.beginPath(); ctx.moveTo(28,y+8); ctx.lineTo(W-28,y+8); ctx.stroke();
+    y+=rowH;
+  });
+
+  ctx.fillStyle='#9CA9B6'; ctx.font='11px Arial, sans-serif';
+  ctx.fillText('Solo dispensas con estado activo. El gráfico general corresponde al agregado de las 20 bodegas mostradas.', 28, H-18);
+
+  const a=document.createElement('a');
+  const slug=zonaSel.replace(/[^A-Za-z0-9\-_]+/g,'_').slice(0,40);
+  a.download='Top20_'+(esEf?'Mejor_Eficiencia':'Mayor_Indice_Pendiente')+'_'+slug+'_'+hoy.toISOString().slice(0,10)+'.png';
+  a.href=cv.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('Imagen del Top 20 ('+(esEf?'mejor eficiencia':'mayor índice de pendientes')+') descargada.');
+}
+(function(){
+  const b1=document.getElementById('btnImagenTopEficiencia');
+  const b2=document.getElementById('btnImagenTopPendiente');
+  if(b1) b1.addEventListener('click', ()=>descargarImagenTopBodegasDispensa('eficiencia'));
+  if(b2) b2.addEventListener('click', ()=>descargarImagenTopBodegasDispensa('pendiente'));
+})();
 
 // Selector genérico de gráfico de pastel: permite ver "General" (agregado de todas las
 // bodegas, recalculando las razones sobre las sumas) o una bodega puntual.
