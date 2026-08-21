@@ -230,6 +230,11 @@ table.data tbody tr:nth-child(even){background:#F7FAFD;}
 table.data tbody tr:nth-child(even):hover{background:var(--blue-soft);}
 table.data tbody tr.total-row{background:var(--green-soft) !important;font-weight:700;position:sticky;bottom:0;}
 table.data tbody tr.total-row td{border-top:2px solid var(--green);color:var(--green-deep);}
+
+/* Indicador de dispensa: la columna "Bodega detalle" se reduce a la mitad y el nombre
+   se reparte en varias líneas para verlo completo sin ensanchar la tabla. */
+#tblDispensa thead th:nth-child(2){width:185px;min-width:185px;max-width:185px;white-space:normal;}
+#tblDispensa tbody td:nth-child(2){width:185px;min-width:185px;max-width:185px;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;}
 .pct-good{color:var(--green);font-weight:600;}
 .pct-mid{color:var(--amber);font-weight:600;}
 .pct-bad{color:var(--red);font-weight:600;}
