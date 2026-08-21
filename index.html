@@ -273,6 +273,13 @@ table.data tbody tr.total-row td{border-top:2px solid var(--green);color:var(--g
 #tblLinea tbody tr.total-row td:nth-child(1),#tblLinea tbody tr.total-row td:nth-child(2),
 #tblSoporte tbody tr.total-row td:nth-child(1),#tblSoporte tbody tr.total-row td:nth-child(2){background:var(--green-soft);z-index:4;}
 
+/* Encabezados ordenables (Indicador Soporte Evento) */
+table.data thead th.sortable{cursor:pointer;user-select:none;}
+table.data thead th.sortable:hover{filter:brightness(1.15);}
+table.data thead th.sortable .sort-ind{font-size:9.5px;opacity:.55;margin-left:3px;}
+table.data thead th.sortable.sort-active .sort-ind{opacity:1;color:#FFD98A;}
+table.data thead th.sortable.sort-active{text-decoration:underline;text-underline-offset:3px;}
+
 .pct-good{color:var(--green);font-weight:600;}
 .pct-mid{color:var(--amber);font-weight:600;}
 .pct-bad{color:var(--red);font-weight:600;}
@@ -645,7 +652,25 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <div class="legend" id="pieSoporteLegend"></div>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
-          <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las INACTIVO se excluyen. &nbsp;<b>Orden:</b> bodegas ordenadas por % con soporte de menor a mayor (las de peor cumplimiento primero).</p>
+          <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las INACTIVO se excluyen. &nbsp;<b>Orden:</b> usa el filtro de abajo (o haz clic en los encabezados <i>Total</i>, <i>Con soporte</i>, <i>Sin soporte</i>, <i>% con soporte</i>) para ordenar de mayor a menor o de menor a mayor.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+            <div class="field" style="max-width:210px;margin-bottom:0;">
+              <label>Ordenar por</label>
+              <select id="fSoporteOrdenCol">
+                <option value="ent">Total</option>
+                <option value="entCon">Con soporte</option>
+                <option value="entSin">Sin soporte</option>
+                <option value="efEnt">% con soporte</option>
+              </select>
+            </div>
+            <div class="field" style="max-width:210px;margin-bottom:0;">
+              <label>Dirección</label>
+              <select id="fSoporteOrdenDir">
+                <option value="desc">De mayor a menor</option>
+                <option value="asc">De menor a mayor</option>
+              </select>
+            </div>
+          </div>
           <table class="data" id="tblSoporte">
             <thead>
               <tr>
@@ -653,7 +678,10 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                 <th colspan="4">Dispensas entregadas (Evento)</th>
               </tr>
               <tr class="sub">
-                <th>Total</th><th>Con soporte</th><th>Sin soporte</th><th>% con soporte</th>
+                <th class="sortable" data-col="ent" title="Clic para ordenar por Total">Total<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="entCon" title="Clic para ordenar por Con soporte">Con soporte<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="entSin" title="Clic para ordenar por Sin soporte">Sin soporte<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="efEnt" title="Clic para ordenar por % con soporte">% con soporte<span class="sort-ind">⇅</span></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -3535,6 +3563,67 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
 /* =========================================================================
    12. Indicador Soporte Evento — 3.1 - 3.7
    ========================================================================= */
+// Orden configurable de la tabla de Soporte Evento (Total / Con soporte / Sin soporte / % con soporte).
+let soporteOrden={col:'efEnt', dir:'asc'};
+
+function pintarTablaSoporte(){
+  const tbody=document.querySelector('#tblSoporte tbody');
+  if(!tbody) return;
+  const table=(lastTables.soporte||[]).slice();
+  const col=soporteOrden.col, dir=(soporteOrden.dir==='asc')?1:-1;
+  table.sort((a,b)=>{
+    const va=(a[col]==null)?-1:a[col], vb=(b[col]==null)?-1:b[col];
+    if(va===vb) return String(a.bodega||'').localeCompare(String(b.bodega||''));
+    return (va-vb)*dir;
+  });
+  let bodyHtml = table.map(t=>`
+    <tr>
+      <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
+      <td>${fmtInt(t.ent)}</td><td>${fmtInt(t.entCon)}</td><td>${fmtInt(t.entSin)}</td>
+      <td class="${effClass(t.efEnt)}">${fmtPct(t.efEnt)}</td>
+    </tr>`).join('');
+  if(!table.length) bodyHtml='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos (este indicador solo aplica a contrato EVENTO).</td></tr>';
+  else{
+    const sf=(f)=>sumField(table,f);
+    const tE=sf('ent'), tEC=sf('entCon'), tES=sf('entSin');
+    bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
+      <td>${fmtInt(tE)}</td><td>${fmtInt(tEC)}</td><td>${fmtInt(tES)}</td>
+      <td class="${effClass(tE?tEC/tE:null)}">${fmtPct(tE?tEC/tE:null)}</td></tr>`;
+  }
+  tbody.innerHTML=bodyHtml;
+  actualizarControlesOrdenSoporte();
+}
+
+function actualizarControlesOrdenSoporte(){
+  document.querySelectorAll('#tblSoporte thead th.sortable').forEach(th=>{
+    const ind=th.querySelector('.sort-ind');
+    const activo = th.dataset.col===soporteOrden.col;
+    th.classList.toggle('sort-active', activo);
+    if(ind) ind.textContent = activo ? (soporteOrden.dir==='asc'?'▲':'▼') : '⇅';
+  });
+  const selCol=document.getElementById('fSoporteOrdenCol');
+  const selDir=document.getElementById('fSoporteOrdenDir');
+  if(selCol) selCol.value=soporteOrden.col;
+  if(selDir) selDir.value=soporteOrden.dir;
+}
+
+function initOrdenSoporte(){
+  const selCol=document.getElementById('fSoporteOrdenCol');
+  const selDir=document.getElementById('fSoporteOrdenDir');
+  if(selCol) selCol.addEventListener('change', ()=>{ soporteOrden.col=selCol.value; pintarTablaSoporte(); });
+  if(selDir) selDir.addEventListener('change', ()=>{ soporteOrden.dir=selDir.value; pintarTablaSoporte(); });
+  document.querySelectorAll('#tblSoporte thead th.sortable').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const c=th.dataset.col;
+      if(soporteOrden.col===c) soporteOrden.dir=(soporteOrden.dir==='asc')?'desc':'asc';
+      else { soporteOrden.col=c; soporteOrden.dir='desc'; }
+      pintarTablaSoporte();
+    });
+  });
+  actualizarControlesOrdenSoporte();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initOrdenSoporte); else initOrdenSoporte();
+
 function renderIndicadorSoporteEvento(rowsEventoRaw, bodegaSearch, zona){
   // Solo dispensas con Estado Activo (se excluyen las INACTIVO).
   const rowsEvento = soloActivas(rowsEventoRaw);
@@ -3565,25 +3654,9 @@ function renderIndicadorSoporteEvento(rowsEventoRaw, bodegaSearch, zona){
     return { zona:g.zona, bodega:g.bodega, ent, entCon, entSin,
       efEnt: ent? entCon/ent: null };
   });
-  lastTables.soporte=table;
   table.sort((a,b)=>(a.efEnt||0)-(b.efEnt||0));
-
-  const tbody=document.querySelector('#tblSoporte tbody');
-  let bodyHtml = table.map(t=>`
-    <tr>
-      <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
-      <td>${fmtInt(t.ent)}</td><td>${fmtInt(t.entCon)}</td><td>${fmtInt(t.entSin)}</td>
-      <td class="${effClass(t.efEnt)}">${fmtPct(t.efEnt)}</td>
-    </tr>`).join('');
-  if(!table.length) bodyHtml='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos (este indicador solo aplica a contrato EVENTO).</td></tr>';
-  else{
-    const s=(f)=>sumField(table,f);
-    const tE=s('ent'), tEC=s('entCon'), tES=s('entSin');
-    bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
-      <td>${fmtInt(tE)}</td><td>${fmtInt(tEC)}</td><td>${fmtInt(tES)}</td>
-      <td class="${effClass(tE?tEC/tE:null)}">${fmtPct(tE?tEC/tE:null)}</td></tr>`;
-  }
-  tbody.innerHTML=bodyHtml;
+  lastTables.soporte=table;
+  pintarTablaSoporte();
 
   // ---- gráfico de pastel: % Con soporte vs Sin soporte (de las entregadas) ----
   function aggregateSoporteTotals(tbl){
