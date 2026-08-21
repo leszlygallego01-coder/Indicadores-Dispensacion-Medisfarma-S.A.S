@@ -474,6 +474,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <button data-sub="linea">Indicador por línea (subsanar)</button>
         <button data-sub="soporte">Indicador soporte evento</button>
         <button data-sub="inactivas">Indicador por Dispensas Inactivas</button>
+        <button data-sub="traslados">Indicador de Traslados Realizados</button>
       </div>
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
@@ -738,6 +739,47 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
       </div>
 
+      <!-- ---- SUBVISTA: TRASLADOS REALIZADOS ---- -->
+      <div class="subview" id="sub-traslados">
+        <div class="helpbox">Este indicador se calcula con la tabla <b>Traslados</b> (carpeta de Drive). Se cuentan <b>traslados únicos</b> (número de Traslado sin repetir) por usuario: si un traslado tiene varias líneas de artículos, cuenta una sola vez. El <b>Codigo</b> de cada línea se cruza con la tabla Homólogo para clasificar el traslado como <b>Pareto</b> o <b>No Pareto</b>; un mismo traslado puede sumar en ambas columnas si mueve moléculas de los dos tipos. Los filtros de esta sección son independientes de los filtros generales de la pantalla.</div>
+        <div class="helpbox" id="trasladosDiag" style="display:none;"></div>
+        <div class="stat-row" id="statsTraslados"></div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🔁 Traslados realizados por Usuario</h3>
+              <p class="seg-desc">Cada fila es un usuario con la cantidad de traslados únicos que realizó, separados en Pareto y No Pareto. Ordenado de mayor a menor cantidad de traslados.</p>
+            </div>
+            <button class="btn btn-export" id="btnDescargarTraslados" style="margin-left:auto;align-self:center;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por usuario (Excel)</button>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="field" style="flex:1;min-width:180px;">
+              <label>Bodega Origen</label>
+              <select id="fTrasladoOrigen"><option value="">Todas las bodegas origen</option></select>
+            </div>
+            <div class="field" style="flex:1;min-width:180px;">
+              <label>Bodega Destino</label>
+              <select id="fTrasladoDestino"><option value="">Todas las bodegas destino</option></select>
+            </div>
+            <div class="field" style="flex:1;min-width:180px;">
+              <label>Buscar usuario</label>
+              <input type="text" id="fTrasladoUsuario" placeholder="Escribe parte del nombre…">
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:520px;">
+            <table class="data" id="tblTrasladosUsuario">
+              <thead>
+                <tr>
+                  <th>#</th><th>Usuario</th><th>Traslados realizados</th><th>Pareto</th><th>No Pareto</th><th>% del total</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -876,6 +918,19 @@ const DATASETS = [
     desc: 'Catálogo de siglas comerciales de cliente / EPS, usado como referencia para el filtro.',
     cols: ['Sigla Comercial del Cliente'],
     fields: { sigla: ['SIGLA COMERCIAL DEL CLIENTE','SIGLA COMERCIAL CLIENTE','SIGLA'] }
+  },
+  {
+    key: 'traslados', tabla: 'Tabla_8', title: 'Traslados', required: false,
+    desc: 'Traslados entre bodegas realizados por cada usuario. Los datos provienen exclusivamente de la carpeta de Google Drive y se reemplazan por completo en cada sincronización. El Codigo se cruza con la tabla Homólogo para saber si la molécula es Pareto o No Pareto.',
+    cols: ['Traslado','Fecha','Bodega Origen','Bodega Destino','Codigo','Usuario'],
+    fields: {
+      traslado: ['TRASLADO','NRO TRASLADO','NUMERO TRASLADO','NÚMERO TRASLADO','No TRASLADO','DOCUMENTO TRASLADO','DOCUMENTO','CONSECUTIVO'],
+      fecha: ['FECHA','FECHA TRASLADO','FECHA DE TRASLADO','FECHA DEL TRASLADO'],
+      bodegaOrigen: ['BODEGA ORIGEN','BODEGA DE ORIGEN','ORIGEN','BODEGA SALIDA'],
+      bodegaDestino: ['BODEGA DESTINO','BODEGA DE DESTINO','DESTINO','BODEGA LLEGADA'],
+      codigo: ['CODIGO','CÓDIGO','CODIGO ARTICULO','CODIGO DE ARTICULO','COD ARTICULO','COD. ARTICULO'],
+      usuario: ['USUARIO','USUARIO CREACION','USUARIO CREACIÓN','USUARIO QUE REALIZA','USUARIO TRASLADO','RESPONSABLE']
+    }
   }
 ];
 
@@ -953,7 +1008,7 @@ function deserializeFromFirestore(doc){
    Se usa IndexedDB (no localStorage) porque el acumulado del Reporte puede
    superar facilmente la cuota de localStorage.
    ========================================================================= */
-const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo'];
+const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo', 'traslados'];
 function isDriveOnlyKey(k){ return DRIVE_ONLY_KEYS.indexOf(k) >= 0; }
 
 const LOCAL_DB_NAME = 'medisfarma_drive_local';
@@ -1093,6 +1148,9 @@ async function idbDelete(key) {
     } else if (key === 'homologo') {
       // Homologo NO usa localStorage: solo memoria + IndexedDB
       _driveFilesHomologo = [];
+    } else if (key === 'traslados') {
+      // Traslados NO usa localStorage: solo memoria + IndexedDB
+      _driveFilesTraslados = [];
     }
     delete state.loaded[key];
     return;
@@ -1401,12 +1459,15 @@ function updateCalcButton(){
 const DRIVE_FOLDER_ID = '1eHRKlKXViXc5F_2yNPIXFCYsd-V26EpU';            // Inventario General
 const DRIVE_FOLDER_REPORTE = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';       // Reportes de Dispensación
 const DRIVE_FOLDER_HOMOLOGO = '11UzrdMdVlcwZFWusXg5fUastekt0eRPb';      // Tabla Homólogo
+const DRIVE_FOLDER_TRASLADOS = '1DJrU4m0vzZY2AHaXPBdIu80gDEgZtJzK';     // Traslados entre bodegas
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 let _driveSyncing = false;
 let _driveSyncingReporte = false;
 let _driveSyncingHomologo = false;
+let _driveSyncingTraslados = false;
 let _driveFilesReporte = [];
 let _driveFilesHomologo = []; // solo en memoria: Homologo no usa localStorage
+let _driveFilesTraslados = []; // solo en memoria: Traslados no usa localStorage
 let _driveFiles = []; // archivos listados del folder de Drive
 
 /* Fila de configuracion del acceso a Google (boton + ID actual acortado) */
@@ -1598,6 +1659,63 @@ function homologoCardHTML(d, loaded) {
     html += '<div class="drive-file-list">';
     for (let i = 0; i < _driveFilesHomologo.length; i++) {
       const f = _driveFilesHomologo[i];
+      html += '<div class="drive-file-item">';
+      html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
+      if (f.modifiedTime) {
+        const dt = new Date(f.modifiedTime);
+        html += '<span class="fdate">' + dt.toLocaleDateString('es') + ' ' + dt.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  if (loaded && loaded.updatedAt) {
+    const sd = new Date(loaded.updatedAt);
+    html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b></div>';
+  }
+
+  return html;
+}
+
+/* ---------- Tarjeta "Traslados": solo Google Drive (reemplaza, no acumula) ---------- */
+function trasladosCardHTML(d, loaded) {
+  const syncing = _driveSyncingTraslados;
+  let html = '';
+
+  html += '<h3>' + d.title + ' <span class="drive-badge">☁️ solo Google Drive</span></h3>';
+  html += '<p class="desc">' + d.desc + '</p>';
+  html += '<div class="cols">' + d.cols.join(' · ') + '</div>';
+
+  html += '<div class="drive-folder-info">📂 Carpeta Drive: <code>Traslados</code><br>ID: <code>' + DRIVE_FOLDER_TRASLADOS + '</code></div>';
+
+  html += '<button class="drive-sync-btn" id="btnDriveSyncTraslados" onclick="syncTrasladosFromDrive()"' + (syncing ? ' disabled' : '') + '>';
+  html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Traslados" (Drive)';
+  html += '</button>';
+
+  html += driveConfigRowHTML();
+
+  if (_driveErrorTraslados) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorTraslados) + '</div>';
+  }
+
+  html += '<div class="status-row">';
+  if (loaded) {
+    html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas</span>';
+    html += '<button class="clear" data-key="' + d.key + '">Quitar</button>';
+  } else {
+    html += '<span class="empty">Sin cargar</span><span></span>';
+  }
+  html += '</div>';
+
+  if (loaded && loaded.fileName) {
+    html += '<div class="filename">Archivo: ' + escapeHtmlTxt(loaded.fileName) + '</div>';
+  }
+
+  if (_driveFilesTraslados.length > 0) {
+    html += '<div class="drive-file-list">';
+    for (let i = 0; i < _driveFilesTraslados.length; i++) {
+      const f = _driveFilesTraslados[i];
       html += '<div class="drive-file-item">';
       html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
       if (f.modifiedTime) {
@@ -2027,6 +2145,55 @@ async function syncHomologoFromDrive() {
   }
 }
 
+/* ---------- Sincronización Drive de "Traslados" (REEMPLAZA, no acumula) ----------
+   Lee el archivo más reciente de la carpeta de Drive y sustituye por completo la
+   tabla de traslados. Los datos quedan solo en el almacén local del navegador. */
+async function syncTrasladosFromDrive() {
+  if (_driveSyncingTraslados) return;
+  _driveSyncingTraslados = true;
+  renderUploadCards();
+
+  const KEY = 'traslados';
+  const def = DATASETS.find(d => d.key === KEY);
+
+  try {
+    clearDriveError('traslados');
+    const accessToken = await authenticateDrive();
+
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_TRASLADOS);
+    if (!files || !files.length) throw new Error('NO_FILES');
+
+    _driveFilesTraslados = files.map(f => ({ name: f.name, modifiedTime: f.modifiedTime }));
+
+    const newest = files.slice().sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+
+    showToast('Leyendo desde Drive: ' + newest.name + '…');
+    const buf = await downloadDriveFile(accessToken, newest.id, newest.mimeType);
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true, dense: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!aoa.length) throw new Error('El archivo está vacío.');
+
+    const rows = parseRowsFromAOA(aoa, def);
+    if (!rows.length) {
+      showToast('No se encontraron filas de datos en el archivo de Drive.', true);
+      return;
+    }
+
+    await idbPut({ key: KEY, rows, fileName: newest.name, batches: null, updatedAt: new Date().toISOString() });
+
+    showToast('"' + def.title + '" sincronizado desde Drive: ' + fmtInt(rows.length) + ' filas (tabla reemplazada).');
+
+    await refreshStatusFromDB();
+  } catch (err) {
+    console.error('Drive sync error (traslados):', err);
+    showDriveError('traslados', driveErrorMessage(err), err);
+  } finally {
+    _driveSyncingTraslados = false;
+    renderUploadCards();
+  }
+}
+
 /* ---------- Capa de diagnostico para llamadas a Google Drive ----------
    Antes cualquier fallo se convertia en un mensaje generico de "sin permiso",
    lo que hacia imposible saber que estaba pasando realmente. Ahora se conserva
@@ -2180,6 +2347,7 @@ function driveErrorMessage(err) {
 let _driveErrorInventario = '';
 let _driveErrorReporte = '';
 let _driveErrorHomologo = '';
+let _driveErrorTraslados = '';
 function escapeHtmlTxt(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -2192,12 +2360,14 @@ function showDriveError(which, message, err) {
   if (_driveAccountEmail) full += '\nSesion iniciada con: ' + _driveAccountEmail;
   if (which === 'reporte') _driveErrorReporte = full;
   else if (which === 'homologo') _driveErrorHomologo = full;
+  else if (which === 'traslados') _driveErrorTraslados = full;
   else _driveErrorInventario = full;
   showToast(message, true);
 }
 function clearDriveError(which) {
   if (which === 'reporte') _driveErrorReporte = '';
   else if (which === 'homologo') _driveErrorHomologo = '';
+  else if (which === 'traslados') _driveErrorTraslados = '';
   else _driveErrorInventario = '';
 }
 
@@ -2270,6 +2440,9 @@ function renderUploadCards(){
     } else if(d.key === 'homologo') {
       card.className = 'card drive-only required' + (loaded ? ' loaded' : '');
       card.innerHTML = homologoCardHTML(d, loaded);
+    } else if(d.key === 'traslados') {
+      card.className = 'card drive-only optional' + (loaded ? ' loaded' : '');
+      card.innerHTML = trasladosCardHTML(d, loaded);
     } else {
       card.innerHTML = `<h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
       <p class="desc">${d.desc}</p>
@@ -2593,8 +2766,27 @@ async function calcularIndicadores(){
     // sentido el comparativo periódico (cargue contra cargue).
     const cargues = new Set(rows.map(r=>r.fechaCargue).filter(Boolean));
     const hasCargues = cargues.size > 0;
-    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues};
+    // ---- Tabla_8 Traslados: cruce del Codigo con la tabla Homólogo (Pareto / No Pareto) ----
+    const trasladosRaw = byKey.traslados || [];
+    const trasladosRows = trasladosRaw.map(r=>{
+      const codigo = normValue(r.codigo);
+      const p = codigoToParetoDirect.get(codigo) || 'N/D';
+      return {
+        traslado: String(r.traslado||'').trim(),
+        fecha: toDateSafe(r.fecha),
+        bodegaOrigen: String(r.bodegaOrigen||'').trim(),
+        bodegaDestino: String(r.bodegaDestino||'').trim(),
+        codigo,
+        usuario: String(r.usuario||'').trim() || 'SIN USUARIO',
+        moleculaPareto: p
+      };
+    });
+    const trasladosOrigenes = Array.from(new Set(trasladosRows.map(r=>r.bodegaOrigen).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+    const trasladosDestinos = Array.from(new Set(trasladosRows.map(r=>r.bodegaDestino).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+
+    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues, traslados:trasladosRows, trasladosOrigenes, trasladosDestinos};
     populateFilters();
+    populateTrasladosFilters();
     aplicarFiltrosYRenderizar();
     document.getElementById('resCount').textContent=fmtInt(rows.length);
     switchTab('resultados');
@@ -3061,6 +3253,140 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
     tbB.innerHTML=h;
   }
 }
+
+/* =========================================================================
+   Indicador de Traslados Realizados (tabla Traslados + cruce Homólogo)
+   Filtros propios: Bodega Origen, Bodega Destino y buscador de usuario.
+   ========================================================================= */
+let _trasladosUsuarioCache=[];
+
+function populateTrasladosFilters(){
+  const p=state.processed; if(!p) return;
+  const selO=document.getElementById('fTrasladoOrigen');
+  const selD=document.getElementById('fTrasladoDestino');
+  if(selO){
+    const prev=selO.value||'';
+    const ops=p.trasladosOrigenes||[];
+    selO.innerHTML='<option value="">Todas las bodegas origen</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+    selO.value = ops.includes(prev) ? prev : '';
+  }
+  if(selD){
+    const prev=selD.value||'';
+    const ops=p.trasladosDestinos||[];
+    selD.innerHTML='<option value="">Todas las bodegas destino</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+    selD.value = ops.includes(prev) ? prev : '';
+  }
+  renderIndicadorTraslados();
+}
+
+function renderIndicadorTraslados(){
+  const tb=document.querySelector('#tblTrasladosUsuario tbody');
+  if(!tb) return;
+  const p=state.processed;
+  const all=(p && p.traslados) ? p.traslados : [];
+  const statsEl=document.getElementById('statsTraslados');
+  const diagEl=document.getElementById('trasladosDiag');
+
+  if(!all.length){
+    if(statsEl) statsEl.innerHTML='';
+    if(diagEl){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Sin datos de traslados.</b> Ve a la pestaña de cargue, sincroniza la tarjeta <b>Traslados</b> desde Google Drive y vuelve a calcular los indicadores.';
+    }
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados cargados.</td></tr>';
+    _trasladosUsuarioCache=[];
+    return;
+  }
+
+  const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
+  const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
+  const busca=normValue((document.getElementById('fTrasladoUsuario')||{}).value||'');
+
+  const filas=all.filter(r=>{
+    if(origen && r.bodegaOrigen!==origen) return false;
+    if(destino && r.bodegaDestino!==destino) return false;
+    return true;
+  });
+
+  // Traslados ÚNICOS por usuario: se agrupa por número de Traslado (si viene vacío se
+  // usa una clave por fila para no perder el registro). Un traslado puede contener
+  // moléculas Pareto y No Pareto: en ese caso suma en las dos columnas.
+  const porUsuario=new Map();
+  filas.forEach((r,i)=>{
+    const u=r.usuario||'SIN USUARIO';
+    if(!porUsuario.has(u)) porUsuario.set(u, {usuario:u, ids:new Set(), pareto:new Set(), noPareto:new Set(), lineas:0});
+    const g=porUsuario.get(u);
+    const id=r.traslado ? 'T:'+r.traslado : 'F:'+i;
+    g.ids.add(id); g.lineas++;
+    if(r.moleculaPareto==='PARETO') g.pareto.add(id);
+    else if(r.moleculaPareto==='NO PARETO') g.noPareto.add(id);
+  });
+
+  const listaFull=[...porUsuario.values()].map(g=>({
+    usuario:g.usuario, cant:g.ids.size, pareto:g.pareto.size, noPareto:g.noPareto.size, lineas:g.lineas
+  })).sort((a,b)=> (b.cant-a.cant) || a.usuario.localeCompare(b.usuario,'es'));
+
+  const totalTraslados=listaFull.reduce((a,u)=>a+u.cant,0);
+  const trasladosUnicosGlobal=new Set(filas.map((r,i)=>r.traslado?('T:'+r.traslado):('F:'+i))).size;
+  const sinClasificar=filas.filter(r=>r.moleculaPareto==='N/D').length;
+  const fechas=filas.map(r=>r.fecha).filter(Boolean).sort((a,b)=>a-b);
+
+  if(statsEl){
+    statsEl.innerHTML =
+      '<div class="stat"><div class="label">Traslados únicos</div><div class="value">'+fmtInt(trasladosUnicosGlobal)+'</div>'+
+      '<div class="sub">'+fmtInt(filas.length)+' líneas de artículo</div></div>'+
+      '<div class="stat"><div class="label">Usuarios que trasladaron</div><div class="value">'+fmtInt(listaFull.length)+'</div></div>'+
+      '<div class="stat"><div class="label">Líneas Pareto</div><div class="value">'+fmtInt(filas.filter(r=>r.moleculaPareto==='PARETO').length)+'</div></div>'+
+      '<div class="stat"><div class="label">Líneas No Pareto</div><div class="value">'+fmtInt(filas.filter(r=>r.moleculaPareto==='NO PARETO').length)+'</div></div>'+
+      '<div class="stat"><div class="label">Rango de fechas</div><div class="value" style="font-size:16px;">'+
+        (fechas.length ? escHtml(dateToISO(fechas[0])+' → '+dateToISO(fechas[fechas.length-1])) : '—')+'</div></div>';
+  }
+
+  if(diagEl){
+    if(sinClasificar>0){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Nota:</b> '+fmtInt(sinClasificar)+' de '+fmtInt(filas.length)+' líneas tienen un <b>Codigo</b> que no se encontró en la tabla Homólogo, por lo que no se pueden clasificar como Pareto o No Pareto. Esas líneas sí cuentan en el total de traslados del usuario.';
+    } else {
+      diagEl.style.display='none'; diagEl.innerHTML='';
+    }
+  }
+
+  _trasladosUsuarioCache=listaFull;
+
+  const lista = busca ? listaFull.filter(u=>normValue(u.usuario).includes(busca)) : listaFull;
+
+  if(!lista.length){
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay traslados para los filtros seleccionados.</td></tr>';
+    return;
+  }
+
+  // La posición (#) corresponde al ranking real dentro de todos los usuarios,
+  // así el buscador no altera el puesto que ocupa cada persona.
+  const rank=new Map(); listaFull.forEach((u,i)=>rank.set(u.usuario, i+1));
+  let h=lista.map(u=>
+    '<tr><td>'+rank.get(u.usuario)+'</td>'+
+    '<td class="txt">'+escHtml(u.usuario)+'</td>'+
+    '<td><b>'+fmtInt(u.cant)+'</b></td>'+
+    '<td>'+fmtInt(u.pareto)+'</td>'+
+    '<td>'+fmtInt(u.noPareto)+'</td>'+
+    '<td>'+fmtPct(totalTraslados?u.cant/totalTraslados:null)+'</td></tr>'
+  ).join('');
+  const sum=lista.reduce((a,u)=>a+u.cant,0);
+  const sumP=lista.reduce((a,u)=>a+u.pareto,0);
+  const sumNP=lista.reduce((a,u)=>a+u.noPareto,0);
+  h+='<tr class="total-row"><td>—</td><td class="txt">TOTAL ('+lista.length+(lista.length===1?' usuario)':' usuarios)')+'</td>'+
+     '<td>'+fmtInt(sum)+'</td><td>'+fmtInt(sumP)+'</td><td>'+fmtInt(sumNP)+'</td><td>'+fmtPct(totalTraslados?sum/totalTraslados:null)+'</td></tr>';
+  tb.innerHTML=h;
+}
+
+['fTrasladoOrigen','fTrasladoDestino'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('change', renderIndicadorTraslados);
+});
+(function(){
+  const el=document.getElementById('fTrasladoUsuario');
+  if(el) el.addEventListener('input', renderIndicadorTraslados);
+})();
 
 // ---- Comparativo PRIMER CARGUE vs ÚLTIMO CARGUE del Reporte de Dispensación ----
 // El Reporte de Dispensación es acumulativo: cada cargue trae de nuevo las mismas
@@ -3944,6 +4270,52 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
   XLSX.writeFile(wb, 'Dispensas_Inactivas_por_Bodega_'+fecha+'.xlsx');
   showToast('Excel de dispensas inactivas exportado: '+fmtInt(detalle.length)+' dispensas.');
 });
+
+(function(){
+  const btn=document.getElementById('btnDescargarTraslados');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    const p=state.processed;
+    const all=(p && p.traslados) ? p.traslados : [];
+    if(!all.length){ showToast('No hay traslados cargados para exportar.', true); return; }
+    if(!_trasladosUsuarioCache.length){ showToast('No hay traslados para los filtros actuales.', true); return; }
+
+    const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
+    const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
+    const total=_trasladosUsuarioCache.reduce((a,u)=>a+u.cant,0);
+
+    const resumen=_trasladosUsuarioCache.map((u,i)=>({
+      '#': i+1,
+      'Usuario': u.usuario,
+      'Traslados realizados': u.cant,
+      'Pareto': u.pareto,
+      'No Pareto': u.noPareto,
+      'Líneas de artículo': u.lineas,
+      '% del total': total ? u.cant/total : 0
+    }));
+
+    const detalle=all.filter(r=>{
+      if(origen && r.bodegaOrigen!==origen) return false;
+      if(destino && r.bodegaDestino!==destino) return false;
+      return true;
+    }).map(r=>({
+      'Traslado': r.traslado,
+      'Fecha': r.fecha ? dateToISO(r.fecha) : '',
+      'Bodega Origen': r.bodegaOrigen,
+      'Bodega Destino': r.bodegaDestino,
+      'Codigo': r.codigo,
+      'Usuario': r.usuario,
+      'Molécula Pareto': r.moleculaPareto
+    }));
+
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Traslados por Usuario');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle Traslados');
+    const fecha=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb, 'Traslados_por_Usuario_'+fecha+'.xlsx');
+    showToast('Excel de traslados exportado: '+fmtInt(resumen.length)+' usuarios.');
+  });
+})();
 
 /* =========================================================================
    14. Navegación
