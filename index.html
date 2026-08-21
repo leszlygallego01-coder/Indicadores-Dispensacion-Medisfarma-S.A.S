@@ -331,8 +331,8 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
 .seg-chart-card{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 1px 2px rgba(11,95,165,0.04);display:flex;flex-direction:column;align-items:center;}
 .seg-chart-card h4{font-family:var(--disp);font-size:13px;margin:0 0 8px;color:var(--blue-deep);align-self:flex-start;}
 .seg-chart-card .legend{margin-top:6px;}
-.seg-no-avances{background:var(--amber-soft);border:1px solid #E8C07A;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#7A5C1A;margin-bottom:14px;line-height:1.5;}
-.seg-no-avances b{color:#7A5C1A;}
+.seg-no-datos{background:var(--amber-soft);border:1px solid #E8C07A;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#7A5C1A;margin-bottom:14px;line-height:1.5;}
+.seg-no-datos b{color:#7A5C1A;}
 
 footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:11px;color:#9CA9B6;font-family:var(--mono);}
 
@@ -484,8 +484,8 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <!-- ---- Seguimiento de Dispensación agrupada por Bodega ---- -->
         <div class="seguimiento-section" id="seguimientoSection">
           <h3>📋 Seguimiento de Dispensación por Bodega</h3>
-          <p class="seg-desc">Muestra entregadas vs pendientes por bodega para cada corte del periodo, con base en los datos de Avances cargados. <b>Orden:</b> las bodegas se listan por Índice de Pendientes de mayor a menor (las más críticas primero).</p>
-          <div class="seg-no-avances" id="segNoAvances"><b>Aún no se han cargado datos de Avances.</b> Carga el archivo de Avances en la pestaña "Cargue de datos" para habilitar este reporte.</div>
+          <p class="seg-desc">Muestra entregadas vs pendientes por bodega para cada corte del periodo, comparando los cargues acumulativos del Reporte de Dispensación (cada cargue nuevo actualiza el estado de la misma línea). <b>Orden:</b> las bodegas se listan por Índice de Pendientes de mayor a menor (las más críticas primero).</p>
+          <div class="seg-no-datos" id="segNoDatos"><b>Aún no hay datos del Reporte de Dispensación.</b> Carga el archivo en la pestaña "Cargue de datos" y calcula los indicadores para habilitar este reporte.</div>
           <div id="segContent" style="display:none;">
             <div class="seguimiento-corte-sel">
               <label>Corte a visualizar en gráfico:</label>
@@ -509,12 +509,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="chart-row" id="cmpDispensaRow" style="grid-template-columns:1fr 1fr;display:none;">
           <div class="chart-card">
-            <h4>Dispensas · Inicial (sin Avances)</h4>
+            <h4>Dispensas · Primer cargue</h4>
             <svg id="cmpDispensaInicial" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpDispensaInicialLegend"></div>
           </div>
           <div class="chart-card">
-            <h4>Dispensas · Actualizado (con Avances)</h4>
+            <h4>Dispensas · Último cargue</h4>
             <svg id="cmpDispensaActual" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpDispensaActualLegend"></div>
           </div>
@@ -560,12 +560,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="chart-row" id="cmpLineaRow" style="grid-template-columns:1fr 1fr;display:none;">
           <div class="chart-card">
-            <h4>Líneas · Inicial (sin Avances)</h4>
+            <h4>Líneas · Primer cargue</h4>
             <svg id="cmpLineaInicial" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpLineaInicialLegend"></div>
           </div>
           <div class="chart-card">
-            <h4>Líneas · Actualizado (con Avances)</h4>
+            <h4>Líneas · Último cargue</h4>
             <svg id="cmpLineaActual" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpLineaActualLegend"></div>
           </div>
@@ -633,12 +633,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="chart-row" id="cmpSoporteRow" style="grid-template-columns:1fr 1fr;display:none;">
           <div class="chart-card">
-            <h4>Soporte · Inicial (sin Avances)</h4>
+            <h4>Soporte · Primer cargue</h4>
             <svg id="cmpSoporteInicial" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpSoporteInicialLegend"></div>
           </div>
           <div class="chart-card">
-            <h4>Soporte · Actualizado (con Avances)</h4>
+            <h4>Soporte · Último cargue</h4>
             <svg id="cmpSoporteActual" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="cmpSoporteActualLegend"></div>
           </div>
@@ -746,7 +746,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
   <div class="modal-box">
     <button class="modal-close" id="btnCerrarPeriodico">✕</button>
     <h2>Reporte Comparativo Periódico</h2>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:0;">Basado en la fecha de cargue de la "Carga de Avances", segmentado en 3 cortes del mes: días 1-10, 11-20 y 21-31. Cada corte muestra el estado ACUMULADO hasta ese día.</p>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0;">Compara los cargues acumulativos del Reporte de Dispensación según su fecha de cargue, segmentada en 3 cortes del mes: días 1-10, 11-20 y 21-31. Cada corte muestra el estado ACUMULADO hasta ese día, tomando la última versión cargada de cada línea.</p>
     <div id="periodicoFilters" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <div class="field" style="flex:1;min-width:140px;"><label>EPS Consolidada</label><select id="pfEpsGrupo"><option value="">Todas</option></select></div>
       <div class="field" style="flex:1;min-width:140px;"><label>Modalidad</label><select id="pfModalidad"><option value="">Todas</option></select></div>
@@ -874,18 +874,6 @@ const DATASETS = [
     desc: 'Catálogo de siglas comerciales de cliente / EPS, usado como referencia para el filtro.',
     cols: ['Sigla Comercial del Cliente'],
     fields: { sigla: ['SIGLA COMERCIAL DEL CLIENTE','SIGLA COMERCIAL CLIENTE','SIGLA'] }
-  },
-  {
-    key: 'avances', tabla: 'Avances', title: 'Carga de Avances', required: false, accumulate: true,
-    desc: 'Líneas ya entregadas DESPUÉS del cargue inicial (subsanación de pendientes). Se acumula por día. Si todas las líneas de una dispensa quedan cubiertas, esa dispensa pasa a CERRADA.',
-    cols: ['Fecha','Dispensa','Bodega Detalle','Código','Unidades'],
-    fields: {
-      fecha: ['FECHA'],
-      dispensa: ['DISPENSA','DOCUMENTO'],
-      bodegaDetalle: ['BODEGA DETALLE'],
-      codigoArticulo: ['CODIGO','CÓDIGO'],
-      unidades: ['UNIDADES']
-    }
   }
 ];
 
@@ -2316,21 +2304,16 @@ function renderUploadCards(){
   });
 }
 
-// Clave de deduplicación genérica para cargues acumulativos (Reporte de Dispensación y
-// Carga de Avances): identifica una misma línea aunque se vuelva a cargar el mismo día/archivo.
+// Clave de deduplicación para el cargue acumulativo del Reporte de Dispensación:
+// identifica una misma línea aunque se vuelva a cargar el mismo día/archivo.
 function reporteRowDedupKey(r){
   const f = r.fechaDispensacion instanceof Date ? r.fechaDispensacion.toISOString() : r.fechaDispensacion;
   return [r.documento, r.codigoArticulo, r.bodegaDetalle, f, r.unidades, r.cantidadAutorizada]
     .map(v => String(v===undefined||v===null?'':v).trim().toUpperCase())
     .join('|');
 }
-function avanceRowDedupKey(r){
-  return [r.dispensa, r.codigoArticulo, r.bodegaDetalle, r.unidades]
-    .map(v => String(v===undefined||v===null?'':v).trim().toUpperCase())
-    .join('|');
-}
 function dedupKeyFor(key, r){
-  return key==='avances' ? avanceRowDedupKey(r) : reporteRowDedupKey(r);
+  return reporteRowDedupKey(r);
 }
 
 async function handleFileSelected(key,file){
@@ -2364,7 +2347,7 @@ async function handleFileSelected(key,file){
           return;
         }
         // Guardamos la fecha de cargue en cada fila: sirve para el Reporte Comparativo
-        // Periódico (cortes de 1-10 / 11-20 / 21-31) tanto de avances como de soportes.
+        // Periódico (cortes de 1-10 / 11-20 / 21-31), comparando cargue contra cargue.
         r._fechaCargue = nowISO;
         seen.set(k, r); merged.push(r); added++;
       });
@@ -2531,31 +2514,9 @@ async function calcularIndicadores(){
       r.dispensaYPunto = r.bodegaDetalle + '||' + (r.documento || ('_R'+r.idx));   // Dispensa y Punto
     });
 
-    // ---- Carga de Avances: subsana líneas pendientes con lo entregado después del cargue inicial ----
-    const avancesRaw = byKey.avances || [];
-    state.lastAvancesRaw = avancesRaw;
-    const avancesMap = new Map(); // documento|bodega|codigo -> unidades avanzadas
-    avancesRaw.forEach(a=>{
-      const k = String(a.dispensa||'').trim()+'|'+normValue(a.bodegaDetalle)+'|'+normValue(a.codigoArticulo);
-      avancesMap.set(k, (avancesMap.get(k)||0) + toNumber(a.unidades));
-    });
-    const hasAvances = avancesRaw.length > 0;
-    rows.forEach(r=>{
-      const k = r.documento+'|'+r.bodegaNorm+'|'+r.codigoArticulo;
-      const avance = avancesMap.get(k) || 0;
-      r.diferenciaActualizada = r.diferencia < 0 ? Math.min(0, r.diferencia + avance) : r.diferencia;
-      r.lineaPendienteActualizada = r.diferenciaActualizada < 0 ? 'SI' : 'NO';
-    });
-    // Pendiente por Dispensa ACTUALIZADA: si TODAS las líneas del documento quedaron entregadas -> CERRADA
-    const docPendMapAct=new Map();
-    rows.forEach(r=>{
-      if(!r.documento) return;
-      if(r.lineaPendienteActualizada==='SI') docPendMapAct.set(r.documento,true);
-      else if(!docPendMapAct.has(r.documento)) docPendMapAct.set(r.documento,false);
-    });
-    rows.forEach(r=>{
-      r.pendienteDispensaActualizada = r.documento ? (docPendMapAct.get(r.documento) ? 'SI':'NO') : r.lineaPendienteActualizada;
-    });
+    // El estado vigente de cada línea sale del propio cargue acumulativo del Reporte de
+    // Dispensación: cada cargue trae de nuevo la línea con su estado actualizado, por lo que
+    // los avances se calculan comparando versiones (ver snapshotHastaCorte / buildCorteMetrics).
 
     const contratos=Array.from(new Set(rows.map(r=>r.contrato).filter(Boolean))).sort();
     const epsFromReporte=new Set(rows.map(r=>r.eps).filter(Boolean));
@@ -2594,7 +2555,11 @@ async function calcularIndicadores(){
     state.diag = diag;
     renderDiagPanel(diag);
 
-    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasAvances};
+    // ¿Hay al menos dos cargues distintos del Reporte de Dispensación? Solo así tiene
+    // sentido el comparativo periódico (cargue contra cargue).
+    const cargues = new Set(rows.map(r=>r.fechaCargue).filter(Boolean));
+    const hasCargues = cargues.size > 0;
+    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues};
     populateFilters();
     aplicarFiltrosYRenderizar();
     document.getElementById('resCount').textContent=fmtInt(rows.length);
@@ -2736,17 +2701,17 @@ function showEmptyResults(){
 }
 
 /* =========================================================================
-   Seguimiento de Dispensación agrupada por Bodega (con Avances)
+   Seguimiento de Dispensación agrupada por Bodega (cargue vs cargue)
    ========================================================================= */
 let _segLastCorte = 3;
 
 function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
-  const hasAvances = state.processed && state.processed.hasAvances;
+  const hayDatos = !!(state.processed && state.processed.rows && state.processed.rows.length);
   const secEl  = document.getElementById('seguimientoSection');
-  const noAvEl = document.getElementById('segNoAvances');
+  const noAvEl = document.getElementById('segNoDatos');
   const conEl  = document.getElementById('segContent');
   secEl.style.display = '';               // always show the section
-  if(!hasAvances){
+  if(!hayDatos){
     noAvEl.style.display = '';
     conEl.style.display  = 'none';
     return;
@@ -2761,11 +2726,10 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
     return true;
   });
 
-  const avancesRaw = state.lastAvancesRaw || [];
   const NUM_CORTES = 3;
 
   // Build per-bodega, per-corte metrics
-  const cmAll = buildCorteMetrics(filtered, avancesRaw); // returns {1:[...], 2:[...], 3:[...]}
+  const cmAll = buildCorteMetrics(filtered); // returns {1:[...], 2:[...], 3:[...]}
   // Collect unique bodegas from all cortes
   const bodegaSet = new Set();
   [1,2,3].forEach(c => (cmAll[c]||[]).forEach(bm => bodegaSet.add(bm.bodega)));
@@ -3035,18 +2999,24 @@ function renderIndicadorInactivas(rowsAll, bodegaSearch, zona){
   }
 }
 
-// ---- Comparativo ANTES (inicial) vs ACTUALIZADO (con Avances cargados) ----
+// ---- Comparativo PRIMER CARGUE vs ÚLTIMO CARGUE del Reporte de Dispensación ----
+// El Reporte de Dispensación es acumulativo: cada cargue trae de nuevo las mismas
+// líneas con su estado actualizado. Comparando la primera versión de cada línea
+// (línea base) contra la última versión cargada se ven los avances del periodo.
 function renderComparativos(rows){
-  const hasAvances = state.processed && state.processed.hasAvances;
+  const hayCargues = !!(state.processed && state.processed.hasCargues && rows && rows.length);
   ['cmpDispensaRow','cmpLineaRow','cmpSoporteRow'].forEach(id=>{
-    document.getElementById(id).style.display = hasAvances ? 'grid' : 'none';
+    document.getElementById(id).style.display = hayCargues ? 'grid' : 'none';
   });
-  if(!hasAvances) return;
+  if(!hayCargues) return;
+
+  const base   = calcularEstadoHastaCorte(rows, 0);   // primer cargue de cada línea
+  const actual = calcularEstadoHastaCorte(rows, 3);   // último cargue del periodo
 
   // --- Dispensas: entregada/pendiente por Documento, antes vs después ---
-  const dispTotal = new Set(rows.map(r=>r.dispensaYPunto)).size;
-  const dispEntAntes = new Set(rows.filter(r=>r.pendienteDispensa==='NO').map(r=>r.dispensaYPunto)).size;
-  const dispEntDespues = new Set(rows.filter(r=>r.pendienteDispensaActualizada==='NO').map(r=>r.dispensaYPunto)).size;
+  const dispTotal = actual.docPend.size;
+  const dispEntAntes = Array.from(base.docPend.entries()).filter(([,p])=>p===false).length;
+  const dispEntDespues = Array.from(actual.docPend.entries()).filter(([,p])=>p===false).length;
   drawDonut('cmpDispensaInicial', [
     {label:'Entregadas', value: dispEntAntes, color:'#1E8F5E'},
     {label:'Pendientes', value: dispTotal-dispEntAntes, color:'#D98A2B'}
@@ -3063,9 +3033,9 @@ function renderComparativos(rows){
     <div class="item"><span class="sw" style="background:#D98A2B;"></span>Aún pendientes<span class="val">${fmtInt(dispTotal-dispEntDespues)}</span></div>`;
 
   // --- Líneas: entregada/pendiente, antes vs después ---
-  const lineasTotal = rows.length;
-  const lineasEntAntes = rows.filter(r=>r.lineaPendiente==='NO').length;
-  const lineasEntDespues = rows.filter(r=>r.lineaPendienteActualizada==='NO').length;
+  const lineasTotal = base.snap.length;
+  const lineasEntAntes = base.snap.filter(r=>r.lineaPendiente==='NO').length;
+  const lineasEntDespues = actual.snap.filter(r=>actual.lineaPend.get(r.idx)==='NO').length;
   drawDonut('cmpLineaInicial', [
     {label:'Entregadas', value: lineasEntAntes, color:'#1E8F5E'},
     {label:'Pendientes', value: lineasTotal-lineasEntAntes, color:'#D98A2B'}
@@ -3082,12 +3052,12 @@ function renderComparativos(rows){
     <div class="item"><span class="sw" style="background:#D98A2B;"></span>Pendientes<span class="val">${fmtInt(lineasTotal-lineasEntDespues)}</span></div>`;
 
   // --- Soporte Evento: dispensas ENTREGADAS con/sin soporte, antes vs después ---
-  const eventoAntes = rows.filter(r=>r.contrato==='EVENTO' && r.pendienteDispensa==='NO');
-  const eventoDespues = rows.filter(r=>r.contrato==='EVENTO' && r.pendienteDispensaActualizada==='NO');
-  const conSopAntes = new Set(eventoAntes.filter(r=>r.tieneSoportes==='TIENE SOPORTE').map(r=>r.dispensaYPunto)).size;
-  const sinSopAntes = new Set(eventoAntes.filter(r=>r.tieneSoportes==='NO TIENE SOPORTES').map(r=>r.dispensaYPunto)).size;
-  const conSopDespues = new Set(eventoDespues.filter(r=>r.tieneSoportes==='TIENE SOPORTE').map(r=>r.dispensaYPunto)).size;
-  const sinSopDespues = new Set(eventoDespues.filter(r=>r.tieneSoportes==='NO TIENE SOPORTES').map(r=>r.dispensaYPunto)).size;
+  const eventoAntes = base.snap.filter(r=>r.contrato==='EVENTO' && r.documento && base.docPend.get(r.documento)===false);
+  const eventoDespues = actual.snap.filter(r=>r.contrato==='EVENTO' && r.documento && actual.docPend.get(r.documento)===false);
+  const conSopAntes = new Set(eventoAntes.filter(r=>tieneSoporteHastaCorte(r,0)).map(r=>r.documento)).size;
+  const sinSopAntes = new Set(eventoAntes.filter(r=>!tieneSoporteHastaCorte(r,0)).map(r=>r.documento)).size;
+  const conSopDespues = new Set(eventoDespues.filter(r=>tieneSoporteHastaCorte(r,3)).map(r=>r.documento)).size;
+  const sinSopDespues = new Set(eventoDespues.filter(r=>!tieneSoporteHastaCorte(r,3)).map(r=>r.documento)).size;
   drawDonut('cmpSoporteInicial', [
     {label:'Con soporte', value: conSopAntes, color:'#0B5FA5'},
     {label:'Sin soporte', value: sinSopAntes, color:'#D98A2B'}
@@ -3732,10 +3702,9 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
   })));
   XLSX.utils.book_append_sheet(wb, wsS, 'INDICADOR SOPORTE EVENTO');
 
-  // --- Seguimiento de Dispensación por Bodega (solo si hay avances) ---
-  if(state.processed && state.processed.hasAvances && filteredRowsCache.length){
-    const avancesRaw = state.lastAvancesRaw || [];
-    const cmAll = buildCorteMetrics(filteredRowsCache, avancesRaw);
+  // --- Seguimiento de Dispensación por Bodega (cargue vs cargue) ---
+  if(state.processed && filteredRowsCache.length){
+    const cmAll = buildCorteMetrics(filteredRowsCache);
     const bodegaSet = new Set();
     [1,2,3].forEach(c => (cmAll[c]||[]).forEach(bm => bodegaSet.add(bm.bodega)));
     const bodegas = Array.from(bodegaSet).sort((a,b) => a.localeCompare(b,'es'));
@@ -3804,19 +3773,23 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
+  const _idxUltimaVersionComprar = new Set(snapshotHastaCorte(filteredRowsCache, 3).map(r=>r.idx));
   const aComprar = filteredRowsCache.filter(r=>{
+    // El Reporte de Dispensación es acumulativo: se considera solo la ÚLTIMA versión cargada
+    // de cada línea, para no contar como pendiente algo que un cargue posterior ya entregó.
+    if(!_idxUltimaVersionComprar.has(r.idx)) return false;
     if(!esEstadoActivo(r.estadoDispensa)) return false;
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
     if(zona && r.zona!==zona) return false;
-    // Aún pendiente (considerando Avances si se cargaron) y sin existencia disponible en ningún lado.
-    const aunPendiente = r.lineaPendienteActualizada!==undefined ? r.lineaPendienteActualizada==='SI' : r.lineaPendiente==='SI';
+    // Aún pendiente según el último cargue y sin existencia disponible en ningún lado.
+    const aunPendiente = r.lineaPendiente==='SI';
     return aunPendiente && r.sePuedeSubsanarPunto==='NO' && r.sePuedeSubsanarBodega==='NO';
   }).map(r=>({
     'Código a comprar': r.codigoArticulo,
     'Homólogo': r.homologo,
     'Descripción DCI': r.descripcionDci,
     'Bodega detalle': r.bodegaDetalle,
-    'Cantidad a comprar': Math.abs(r.diferenciaActualizada!==undefined ? r.diferenciaActualizada : r.diferencia)
+    'Cantidad a comprar': Math.abs(r.diferencia)
   }));
   if(!aComprar.length){ showToast('No hay códigos a comprar en el filtro actual (todo se puede subsanar con existencia).', true); return; }
   const wb=XLSX.utils.book_new();
@@ -3912,7 +3885,7 @@ document.querySelectorAll('.result-tabs button').forEach(b=>{
 });
 
 /* =========================================================================
-   14b. Reporte Comparativo Periódico (basado en "Carga de Avances")
+   14b. Reporte Comparativo Periódico (cargue vs cargue del Reporte de Dispensación)
    ========================================================================= */
 function getPeriodoDeCarga(iso){
   if(!iso) return null;
@@ -3936,39 +3909,60 @@ function corteRecuperacionSoporte(r){
   if(r.tieneSoportes!=='TIENE SOPORTE' || !r.fechaSoporte) return null;
   return getPeriodoDeCarga(r.fechaSoporte);
 }
-// Estado ACUMULADO de cada línea/documento considerando solo los avances cuya fecha de
-// cargue cae en un corte <= corteMax (es decir, "todo lo subsanado hasta ese corte").
-function calcularEstadoHastaCorte(rows, avancesRaw, corteMax){
-  const avancesMap=new Map();
-  avancesRaw.forEach(a=>{
-    const p=getPeriodoDeCarga(a._fechaCargue);
-    if(p===null || p>corteMax) return;
-    const k=String(a.dispensa||'').trim()+'|'+normValue(a.bodegaDetalle)+'|'+normValue(a.codigoArticulo);
-    avancesMap.set(k, (avancesMap.get(k)||0) + toNumber(a.unidades));
+// Identidad de una línea a través de los distintos cargues del Reporte de Dispensación.
+function claveLineaCargue(r){
+  return r.documento+'|'+r.bodegaNorm+'|'+r.codigoArticulo;
+}
+// Corte al que pertenece el cargue en que llegó esta versión de la línea.
+// Las filas guardadas antes de registrar la fecha de cargue cuentan como línea base (0).
+function corteDeCargue(r){
+  const p=getPeriodoDeCarga(r.fechaCargue);
+  return p===null ? 0 : p;
+}
+function esVersionPosterior(a, b){
+  const fa=String(a.fechaCargue||''), fb=String(b.fechaCargue||'');
+  if(fa!==fb) return fa>fb;
+  return a.idx>b.idx;
+}
+// Foto de cada línea al cierre del corte indicado: se toma la ÚLTIMA versión cargada
+// cuyo cargue cae en ese corte o en uno anterior (así el cargue nuevo reemplaza al viejo:
+// lo que estaba pendiente y vuelve a llegar entregado, queda entregado).
+// El corte 0 es la línea base: la PRIMERA versión con la que apareció cada línea.
+function snapshotHastaCorte(rows, corteMax){
+  const porLinea=new Map();
+  rows.forEach(r=>{
+    const k=claveLineaCargue(r);
+    const prev=porLinea.get(k);
+    if(corteMax===0){
+      if(!prev || esVersionPosterior(prev, r)) porLinea.set(k, r);
+      return;
+    }
+    if(corteDeCargue(r)>corteMax) return;
+    if(!prev || esVersionPosterior(r, prev)) porLinea.set(k, r);
   });
+  return Array.from(porLinea.values());
+}
+// Estado ACUMULADO de líneas y documentos al cierre del corte indicado.
+function calcularEstadoHastaCorte(rows, corteMax){
+  const snap=snapshotHastaCorte(rows, corteMax);
   const lineaPend=new Map();
-  rows.forEach(r=>{
-    const k=r.documento+'|'+r.bodegaNorm+'|'+r.codigoArticulo;
-    const avance=avancesMap.get(k)||0;
-    const difAct = r.diferencia<0 ? Math.min(0, r.diferencia+avance) : r.diferencia;
-    lineaPend.set(r.idx, difAct<0 ? 'SI':'NO');
-  });
+  snap.forEach(r=>{ lineaPend.set(r.idx, r.lineaPendiente==='SI' ? 'SI':'NO'); });
   const docPend=new Map();
-  rows.forEach(r=>{
+  snap.forEach(r=>{
     if(!r.documento) return;
     if(lineaPend.get(r.idx)==='SI') docPend.set(r.documento,true);
     else if(!docPend.has(r.documento)) docPend.set(r.documento,false);
   });
-  return {lineaPend, docPend};
+  return {snap, lineaPend, docPend};
 }
-function buildCorteMetrics(rows, avancesRaw){
+function buildCorteMetrics(rows){
   const out={};
-  // El corte 0 es la foto inicial (sin ningún avance aplicado): sirve de línea base
-  // para medir qué se subsanó en cada corte posterior.
+  // El corte 0 es la foto inicial (primer cargue de cada línea): sirve de línea base
+  // para medir qué se recuperó en cada corte posterior.
   [0,1,2,3].forEach(corte=>{
-    const {lineaPend, docPend} = calcularEstadoHastaCorte(rows, avancesRaw, corte);
+    const {snap, lineaPend, docPend} = calcularEstadoHastaCorte(rows, corte);
     const byBodega=new Map();
-    rows.forEach(r=>{
+    snap.forEach(r=>{
       if(!byBodega.has(r.bodegaDetalle)) byBodega.set(r.bodegaDetalle, {
         bodega:r.bodegaDetalle, zona:r.zona, docsSet:new Set(), docsEntSet:new Set(),
         lineas:0, lineasEnt:0, eventoSet:new Set(), eventoConSet:new Set(), eventoSinSet:new Set(),
@@ -4006,8 +4000,8 @@ function buildCorteMetrics(rows, avancesRaw){
 let periodicoTabActual='documento';
 function abrirReportePeriodico(tab){
   if(!state.processed){ showToast('Primero calcula los indicadores.', true); return; }
-  if(!state.lastAvancesRaw || !state.lastAvancesRaw.length){
-    showToast('Aún no has cargado datos en "Carga de Avances" — este reporte se construye a partir de esa fuente.', true);
+  if(!state.processed.rows || !state.processed.rows.length){
+    showToast('Aún no hay datos del Reporte de Dispensación para comparar entre cargues.', true);
     return;
   }
   periodicoTabActual = tab || 'documento';
@@ -4059,7 +4053,7 @@ function renderReportePeriodico(){
     if(fBod && r.bodegaDetalle!==fBod) return false;
     return true;
   });
-  const metrics = buildCorteMetrics(filtered, state.lastAvancesRaw||[]);
+  const metrics = buildCorteMetrics(filtered);
   const cortesLabels={1:'Corte 1 (día 1-10)',2:'Corte 2 (día 11-20)',3:'Corte 3 (día 21-31)'};
   const labelEnt = periodicoTabActual==='documento' ? 'Entregados' : periodicoTabActual==='linea' ? 'Entregadas' : 'Con soporte';
   const labelPend = periodicoTabActual==='documento' ? 'Pendientes' : periodicoTabActual==='linea' ? 'Pendientes' : 'Sin soporte';
@@ -4115,7 +4109,7 @@ function renderReportePeriodico(){
         </div>
         <div class="table-wrap" style="max-height:280px;">
           <table class="data"><thead><tr>${ths.join('')}</tr></thead>
-          <tbody>${rowsHtml || `<tr><td colspan="${numCols}" class="txt" style="text-align:center;color:#9CA9B6;">Sin avances en este corte</td></tr>`}</tbody></table>
+          <tbody>${rowsHtml || `<tr><td colspan="${numCols}" class="txt" style="text-align:center;color:#9CA9B6;">Sin cargues en este corte</td></tr>`}</tbody></table>
         </div>
       </div>`;
   });
