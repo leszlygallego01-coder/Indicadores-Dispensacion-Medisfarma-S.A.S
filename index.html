@@ -237,8 +237,42 @@ table.data tbody tr.total-row td{border-top:2px solid var(--green);color:var(--g
 #tblDispensa tbody td:nth-child(2){width:185px;min-width:185px;max-width:185px;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;}
 
 /* Indicador por línea: mismo ajuste para la columna "Bodega". */
-#tblLinea thead th:nth-child(2){width:185px;min-width:185px;max-width:185px;white-space:normal;}
 #tblLinea tbody td:nth-child(2){width:185px;min-width:185px;max-width:185px;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;}
+/* Columnas Zona y Bodega congeladas a la izquierda: al desplazarse en horizontal
+   siempre se ve a que zona y bodega pertenece cada fila. */
+#tblDispensa thead tr:first-child th:nth-child(1),
+#tblLinea thead tr:first-child th:nth-child(1),
+#tblSoporte thead tr:first-child th:nth-child(1){
+  width:130px;min-width:130px;max-width:130px;white-space:normal;
+  position:sticky;left:0;z-index:6;
+}
+#tblDispensa thead tr:first-child th:nth-child(2),
+#tblLinea thead tr:first-child th:nth-child(2),
+#tblSoporte thead tr:first-child th:nth-child(2){
+  position:sticky;left:130px;z-index:6;box-shadow:2px 0 0 rgba(255,255,255,0.22);
+}
+#tblDispensa tbody td:nth-child(1),
+#tblLinea tbody td:nth-child(1),
+#tblSoporte tbody td:nth-child(1){
+  width:130px;min-width:130px;max-width:130px;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;
+  position:sticky;left:0;z-index:1;background:var(--white);
+}
+#tblDispensa tbody td:nth-child(2),
+#tblLinea tbody td:nth-child(2),
+#tblSoporte tbody td:nth-child(2){
+  position:sticky;left:130px;z-index:1;background:var(--white);
+  box-shadow:2px 0 0 var(--line);
+}
+#tblDispensa tbody tr:nth-child(even) td:nth-child(1),#tblDispensa tbody tr:nth-child(even) td:nth-child(2),
+#tblLinea tbody tr:nth-child(even) td:nth-child(1),#tblLinea tbody tr:nth-child(even) td:nth-child(2),
+#tblSoporte tbody tr:nth-child(even) td:nth-child(1),#tblSoporte tbody tr:nth-child(even) td:nth-child(2){background:#F7FAFD;}
+#tblDispensa tbody tr:hover td:nth-child(1),#tblDispensa tbody tr:hover td:nth-child(2),
+#tblLinea tbody tr:hover td:nth-child(1),#tblLinea tbody tr:hover td:nth-child(2),
+#tblSoporte tbody tr:hover td:nth-child(1),#tblSoporte tbody tr:hover td:nth-child(2){background:var(--blue-soft);}
+#tblDispensa tbody tr.total-row td:nth-child(1),#tblDispensa tbody tr.total-row td:nth-child(2),
+#tblLinea tbody tr.total-row td:nth-child(1),#tblLinea tbody tr.total-row td:nth-child(2),
+#tblSoporte tbody tr.total-row td:nth-child(1),#tblSoporte tbody tr.total-row td:nth-child(2){background:var(--green-soft);z-index:4;}
+
 .pct-good{color:var(--green);font-weight:600;}
 .pct-mid{color:var(--amber);font-weight:600;}
 .pct-bad{color:var(--red);font-weight:600;}
