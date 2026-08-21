@@ -3754,7 +3754,7 @@ function descargarImagenTopBodegasDispensa(modo){
   const efG = tD ? tE/tD : 0;
   const pendG = tD ? 1-efG : 0;
 
-  const rowH=23, headH=232, filasY=headH+34;
+  const rowH=23, headH=286, filasY=headH+34;
   const W=1020, H=filasY + rowH*top.length + 56, scale=2;
   const cv=document.createElement('canvas');
   cv.width=W*scale; cv.height=H*scale;
@@ -3765,17 +3765,44 @@ function descargarImagenTopBodegasDispensa(modo){
   ctx.strokeStyle='#D8E2EC'; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,W-1,H-1);
   ctx.fillStyle='#063C6B'; ctx.fillRect(0,0,W,6);
 
-  // Encabezado
-  ctx.fillStyle='#063C6B'; ctx.font='bold 21px Georgia, serif';
-  ctx.fillText(titulo, 28, 48);
-  ctx.fillStyle='#5C6C7E'; ctx.font='13px Arial, sans-serif';
-  ctx.fillText('Zona: '+zonaSel, 28, 74);
-  ctx.fillText(criterio, 28, 94);
+  // Recorta un texto al ancho disponible para que nunca invada otra zona
+  const recorta=(txt, max)=>{
+    let s=String(txt||'');
+    if(ctx.measureText(s).width<=max) return s;
+    while(s.length>1 && ctx.measureText(s+'…').width>max) s=s.slice(0,-1);
+    return s+'…';
+  };
+
+  // Encabezado: titulo en su propia franja, ocupando todo el ancho
+  let fTit=22;
+  ctx.fillStyle='#063C6B'; ctx.font='bold '+fTit+'px Georgia, serif';
+  while(fTit>14 && ctx.measureText(titulo).width > W-56){ fTit-=1; ctx.font='bold '+fTit+'px Georgia, serif'; }
+  ctx.fillText(recorta(titulo, W-56), 28, 46);
+
   const hoy=new Date();
-  ctx.fillText('Generado: '+hoy.toISOString().slice(0,10)+'  ·  Bodegas evaluadas: '+fmtInt(base.length), 28, 114);
+  ctx.fillStyle='#5C6C7E'; ctx.font='13px Arial, sans-serif';
+  ctx.fillText(recorta('Zona: '+zonaSel+'   ·   '+criterio, W-56), 28, 72);
+
+  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(28,88); ctx.lineTo(W-28,88); ctx.stroke();
+
+  // Bloque izquierdo: datos de contexto (no invade el resumen ni la dona)
+  const panelTop=104;
+  let my=panelTop+18;
+  ctx.font='bold 12px Arial, sans-serif'; ctx.fillStyle='#063C6B';
+  ctx.fillText('Contexto del reporte', 28, my); my+=21;
+  ctx.font='12px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
+  [['Fecha de generación', hoy.toISOString().slice(0,10)],
+   ['Bodegas evaluadas', fmtInt(base.length)],
+   ['Bodegas mostradas', fmtInt(top.length)]].forEach(p=>{
+    ctx.fillStyle='#5C6C7E'; ctx.font='12px Arial, sans-serif';
+    ctx.fillText(p[0], 28, my);
+    ctx.fillStyle='#1B2733'; ctx.font='bold 12px Consolas, monospace';
+    ctx.textAlign='right'; ctx.fillText(p[1], 300, my); ctx.textAlign='left';
+    my+=19;
+  });
 
   // Grafico general (dona) del grupo de bodegas del top
-  const cx=W-132, cy=118, rOut=82, rIn=50;
+  const cx=W-124, cy=panelTop+78, rOut=76, rIn=46;
   const slices=[{v:efG,c:'#1E8F5E'},{v:pendG,c:'#D98A2B'}];
   const tot=slices.reduce((a,b)=>a+(b.v||0),0) || 1;
   let start=-Math.PI/2;
@@ -3790,15 +3817,15 @@ function descargarImagenTopBodegasDispensa(modo){
     start+=ang;
   });
   ctx.textAlign='center';
-  ctx.fillStyle='#063C6B'; ctx.font='bold 27px Consolas, monospace';
-  ctx.fillText(((esEf?efG:pendG)*100).toFixed(1)+'%', cx, cy+5);
-  ctx.font='12px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
-  ctx.fillText(esEf?'Eficiencia':'Pendiente', cx, cy+26);
+  ctx.fillStyle='#063C6B'; ctx.font='bold 25px Consolas, monospace';
+  ctx.fillText(((esEf?efG:pendG)*100).toFixed(1)+'%', cx, cy+4);
+  ctx.font='11.5px Arial, sans-serif'; ctx.fillStyle='#5C6C7E';
+  ctx.fillText(esEf?'Eficiencia':'Pendiente', cx, cy+24);
   ctx.textAlign='left';
 
-  // Resumen general del top 20 (a la izquierda de la dona)
-  const rx=W-470; let ry=52;
-  ctx.font='bold 13px Arial, sans-serif'; ctx.fillStyle='#063C6B';
+  // Resumen general del top 20 (columna central, entre el contexto y la dona)
+  const rx=W-616; let ry=panelTop+18;
+  ctx.font='bold 12px Arial, sans-serif'; ctx.fillStyle='#063C6B';
   ctx.fillText('General del Top 20', rx, ry); ry+=21;
   ctx.font='12px Arial, sans-serif';
   const resumen=[
@@ -3810,7 +3837,7 @@ function descargarImagenTopBodegasDispensa(modo){
   resumen.forEach(p=>{
     ctx.fillStyle='#5C6C7E'; ctx.fillText(p[0], rx, ry);
     ctx.fillStyle='#1B2733'; ctx.font='bold 12px Consolas, monospace';
-    ctx.textAlign='right'; ctx.fillText(p[1], rx+240, ry); ctx.textAlign='left';
+    ctx.textAlign='right'; ctx.fillText(p[1], rx+230, ry); ctx.textAlign='left';
     ctx.font='12px Arial, sans-serif';
     ry+=19;
   });
@@ -3824,7 +3851,7 @@ function descargarImagenTopBodegasDispensa(modo){
     ry+=18;
   });
 
-  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(28,headH-24); ctx.lineTo(W-28,headH-24); ctx.stroke();
+  ctx.strokeStyle='#E6EDF4'; ctx.beginPath(); ctx.moveTo(28,headH-26); ctx.lineTo(W-28,headH-26); ctx.stroke();
 
   // Cabecera de la tabla
   const colX=[36, 66, 210, 470, 560, 650, 750, 880];
