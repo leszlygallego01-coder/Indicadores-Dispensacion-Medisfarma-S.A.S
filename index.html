@@ -1923,16 +1923,23 @@ async function syncReporteFromDrive() {
       if (!rows || !rows.length) continue;
 
       let added = 0, skipped = 0, reparadas = 0, soportesNuevos = 0;
-      const nowISO = new Date().toISOString();
+      // La fecha de cargue es la fecha REAL del archivo en Drive (última modificación),
+      // NO el momento de sincronizar: así cada archivo cae en el corte que le corresponde
+      // (1-10 / 11-20 / 21-31) y los cambios entre cargues se ven de un corte a otro.
+      const nowISO = f.modifiedTime ? new Date(f.modifiedTime).toISOString() : new Date().toISOString();
       for (let j = 0; j < rows.length; j++) {
         const k = dedupKeyFor(KEY, rows[j]);
         if (seen.has(k)) {
           skipped++;
+          const prevRow = seen.get(k);
+          // Corrige históricos guardados con la fecha de sincronización: se queda con la
+          // fecha del archivo MÁS ANTIGUO en que apareció esta versión de la línea.
+          if (!prevRow._fechaCargue || String(prevRow._fechaCargue) > nowISO) prevRow._fechaCargue = nowISO;
           // La fila ya estaba guardada: completamos los campos que estén vacíos
           // (Estado, Usuario Creación, etc.) para no perder datos del acumulado antiguo.
-          if (completarCamposFaltantes(seen.get(k), rows[j])) reparadas++;
+          if (completarCamposFaltantes(prevRow, rows[j])) reparadas++;
           // Si la línea ahora llega CON soporte y antes estaba en 0, lo registramos.
-          if (registrarSoporteRecuperado(seen.get(k), rows[j], nowISO)) soportesNuevos++;
+          if (registrarSoporteRecuperado(prevRow, rows[j], nowISO)) soportesNuevos++;
           continue;
         }
         rows[j]._fechaCargue = nowISO;
@@ -2336,16 +2343,22 @@ async function handleFileSelected(key,file){
       const seen = new Map();
       prevRows.forEach(r => { const k = dedupKeyFor(key, r); if(!seen.has(k)) seen.set(k, r); });
       const merged = prevRows.slice();
-      const nowISO = new Date().toISOString();
+      // La fecha de cargue es la fecha REAL del archivo (última modificación), no el
+      // momento de subirlo: así cada archivo cae en el corte que le corresponde y un
+      // recargue posterior sí se ve como cambio de un corte a otro.
+      const nowISO = (file && file.lastModified ? new Date(file.lastModified) : new Date()).toISOString();
       let added=0, skipped=0, reparadas=0, soportesNuevos=0;
       rows.forEach(r=>{
         const k=dedupKeyFor(key,r);
         if(seen.has(k)){
           skipped++;
+          const prevRow=seen.get(k);
+          // Ajusta históricos: se conserva la fecha del archivo más antiguo donde apareció.
+          if(!prevRow._fechaCargue || String(prevRow._fechaCargue) > nowISO) prevRow._fechaCargue = nowISO;
           // Fila ya guardada: rellenamos los campos vacíos (Estado, Usuario Creación...)
-          if(completarCamposFaltantes(seen.get(k), r)) reparadas++;
+          if(completarCamposFaltantes(prevRow, r)) reparadas++;
           // ¿La línea llegó ahora CON soporte cuando antes estaba en 0 / NO TIENE?
-          if(key==='reporte' && registrarSoporteRecuperado(seen.get(k), r, nowISO)) soportesNuevos++;
+          if(key==='reporte' && registrarSoporteRecuperado(prevRow, r, nowISO)) soportesNuevos++;
           return;
         }
         // Guardamos la fecha de cargue en cada fila: sirve para el Reporte Comparativo
@@ -2504,10 +2517,29 @@ async function calcularIndicadores(){
       };
     });
 
-    // Pendiente por Dispensa (a nivel Documento, sin importar bodega)
+    // ---- Versión VIGENTE de cada línea ----------------------------------------
+    // Cada recargue del Reporte de Dispensación vuelve a traer la línea con su estado
+    // actualizado, así que la misma línea (documento + bodega + artículo) puede tener
+    // varias versiones guardadas. Marcamos como VIGENTE la última versión cargada:
+    // el recargue REEMPLAZA el estado de la versión anterior. Las versiones superadas
+    // se conservan (el Reporte Comparativo las necesita para medir el avance por corte),
+    // pero no deben sumar en los indicadores ni en el seguimiento del estado actual.
+    {
+      const ultimaPorLinea=new Map();
+      rows.forEach(r=>{
+        const k=claveLineaCargue(r);
+        const prev=ultimaPorLinea.get(k);
+        if(!prev || esVersionPosterior(r, prev)) ultimaPorLinea.set(k, r);
+      });
+      rows.forEach(r=>{ r.versionVigente = (ultimaPorLinea.get(claveLineaCargue(r))===r); });
+    }
+
+    // Pendiente por Dispensa (a nivel Documento, sin importar bodega).
+    // Solo cuentan las versiones vigentes: una línea que ya llegó entregada en un
+    // recargue posterior no puede seguir dejando la dispensa como pendiente.
     const docPendMap=new Map();
     rows.forEach(r=>{
-      if(!r.documento) return;
+      if(!r.documento || !r.versionVigente) return;
       if(r.lineaPendiente==='SI') docPendMap.set(r.documento,true);
       else if(!docPendMap.has(r.documento)) docPendMap.set(r.documento,false);
     });
@@ -2663,7 +2695,7 @@ document.getElementById('fInactivasUsuario').addEventListener('change', ()=>{
   if(!filteredRowsCache.length) return;
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
-  renderIndicadorInactivas(filteredRowsCache, bodegaSearch, zona);
+  renderIndicadorInactivas(filteredRowsCache.filter(r=>r.versionVigente!==false), bodegaSearch, zona);
 });
 
 let filteredRowsCache=[];
@@ -2878,12 +2910,17 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
 function renderAllTablesFromCache(){
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
-  renderIndicadorDispensa(filteredRowsCache, bodegaSearch, zona);
-  renderIndicadorLinea(filteredRowsCache, bodegaSearch, zona);
-  renderIndicadorSoporteEvento(filteredRowsCache.filter(r=>r.contrato==='EVENTO'), bodegaSearch, zona);
+  // Los indicadores muestran el estado ACTUAL: solo la última versión de cada línea.
+  // Si una línea pendiente se recargó después como entregada, la versión vieja ya no suma.
+  const rowsVigentes = filteredRowsCache.filter(r=>r.versionVigente!==false);
+  renderIndicadorDispensa(rowsVigentes, bodegaSearch, zona);
+  renderIndicadorLinea(rowsVigentes, bodegaSearch, zona);
+  renderIndicadorSoporteEvento(rowsVigentes.filter(r=>r.contrato==='EVENTO'), bodegaSearch, zona);
+  // Comparativo y seguimiento por corte sí necesitan el historial completo de versiones:
+  // internamente toman la versión vigente al cierre de cada corte.
   renderComparativos(filteredRowsCache);
   renderSeguimientoBodega(filteredRowsCache, bodegaSearch, zona);
-  renderIndicadorInactivas(filteredRowsCache, bodegaSearch, zona);
+  renderIndicadorInactivas(rowsVigentes, bodegaSearch, zona);
 }
 
 /* =========================================================================
@@ -3785,6 +3822,7 @@ document.getElementById('btnDescargarParetoExistencias').addEventListener('click
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
   const base = filteredRowsCache.filter(r=>{
+    if(r.versionVigente===false) return false;          // versión superada por un recargue
     if(!esEstadoActivo(r.estadoDispensa)) return false;
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
     if(zona && r.zona!==zona) return false;
@@ -3816,6 +3854,7 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   const aComprar = filteredRowsCache.filter(r=>{
     // El Reporte de Dispensación es acumulativo: se considera solo la ÚLTIMA versión cargada
     // de cada línea, para no contar como pendiente algo que un cargue posterior ya entregó.
+    if(r.versionVigente===false) return false;
     if(!_idxUltimaVersionComprar.has(r.idx)) return false;
     if(!esEstadoActivo(r.estadoDispensa)) return false;
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
@@ -3844,6 +3883,7 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
   const sinHom = filteredRowsCache.filter(r=>{
+    if(r.versionVigente===false) return false;          // versión superada por un recargue
     if(!esEstadoActivo(r.estadoDispensa)) return false;
     if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
     if(zona && r.zona!==zona) return false;
