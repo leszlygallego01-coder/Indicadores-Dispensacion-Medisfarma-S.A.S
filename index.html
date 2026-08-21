@@ -479,8 +479,9 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
       <div class="subview active" id="sub-dispensa">
-        <div style="margin-bottom:14px;">
+        <div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-ghost" data-open-periodico="documento">📊 Reporte Comparativo Periódico</button>
+          <button class="btn btn-export" id="btnDescargarDetalleBodega">⬇ Descargar detalle por bodega (Excel)</button>
         </div>
         <div class="stat-row" id="statsDispensa"></div>
 
@@ -4438,6 +4439,39 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
   const fecha=new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, 'Sin_Homologar_'+fecha+'.xlsx');
   showToast('Excel de Sin Homologar exportado: '+fmtInt(sinHom.length)+' líneas.');
+});
+
+// ---- Detalle por bodega: líneas del Reporte de Dispensación con las columnas clave ----
+// Respeta la bodega escrita en el filtro (y la zona); si no hay filtro, exporta todas.
+document.getElementById('btnDescargarDetalleBodega').addEventListener('click', ()=>{
+  if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
+  const bodegaTexto = String(document.getElementById('fBodegaSearch').value||'').trim();
+  const bodegaSearch = normValue(bodegaTexto);
+  const zona = document.getElementById('fZona').value;
+  // Solo la última versión cargada de cada línea (el reporte es acumulativo).
+  const _idxUltima = new Set(snapshotHastaCorte(filteredRowsCache, 3).map(r=>r.idx));
+  const detalle = filteredRowsCache.filter(r=>{
+    if(r.versionVigente===false) return false;
+    if(!_idxUltima.has(r.idx)) return false;
+    if(!esEstadoActivo(r.estadoDispensa)) return false;
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
+    if(zona && r.zona!==zona) return false;
+    return true;
+  }).map(r=>({
+    'Bodega detalle': r.bodegaDetalle,
+    'Dispensa': r.documento,
+    'Codigo': r.codigoArticulo,
+    'Descripción DCI': r.descripcionDci,
+    'Cantidad': r.unidades,
+    'Usuario Creación': r.usuarioCreacion
+  }));
+  if(!detalle.length){ showToast('No hay líneas para el filtro actual.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle por Bodega');
+  const fecha=new Date().toISOString().slice(0,10);
+  const sufijo = (bodegaTexto || zona || 'Todas').replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ ]+/g,'').trim().replace(/\s+/g,'_');
+  XLSX.writeFile(wb, 'Detalle_Dispensa_'+sufijo+'_'+fecha+'.xlsx');
+  showToast('Excel de detalle por bodega exportado: '+fmtInt(detalle.length)+' líneas.');
 });
 
 // ---- Dispensas inactivas por bodega: resumen + detalle (Documento y Usuario Creación) ----
