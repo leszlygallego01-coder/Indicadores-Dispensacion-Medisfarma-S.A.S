@@ -785,11 +785,15 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <p class="seg-desc">Cada fila es un usuario con la cantidad de traslados únicos que realizó y el detalle de líneas: totales, Pareto, No Pareto y no homologadas. Ordenado de mayor a menor cantidad de traslados.</p>
             </div>
             <div style="margin-left:auto;align-self:center;display:flex;gap:10px;flex-wrap:wrap;">
-              <button class="btn btn-export" id="btnDescargarTraslados" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por usuario (Excel)</button>
+              <button class="btn btn-export" id="btnDescargarTrasladosDestino" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar traslados por bodega destino (Excel)</button>
               <button class="btn btn-export" id="btnDescargarTrasladosNoHom" style="background:var(--amber);box-shadow:0 2px 0 #A6641B;">⬇ Descargar líneas no homologadas (Excel)</button>
             </div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="field" style="flex:1;min-width:180px;">
+              <label>Zona (bodega destino)</label>
+              <select id="fTrasladoZona"><option value="">Todas las zonas</option></select>
+            </div>
             <div class="field" style="flex:1;min-width:180px;">
               <label>Bodega Origen</label>
               <select id="fTrasladoOrigen"><option value="">Todas las bodegas origen</option></select>
@@ -3140,11 +3144,15 @@ async function calcularIndicadores(){
         descripcion: String(r.descripcion||'').trim() || (codigoToDescripcionDci.get(codigo) || ''),
         cantidad: toNumber(r.cantidad),
         usuario: String(r.usuario||'').trim() || 'SIN USUARIO',
-        moleculaPareto: p
+        moleculaPareto: p,
+        // Zona de la bodega DESTINO (tabla Bodega y Zona). Permite agrupar y filtrar
+        // los traslados recibidos por zona.
+        zonaDestino: bodegaToZona.get(normValue(r.bodegaDestino)) || 'N/D'
       };
     });
     const trasladosOrigenes = Array.from(new Set(trasladosRows.map(r=>r.bodegaOrigen).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
     const trasladosDestinos = Array.from(new Set(trasladosRows.map(r=>r.bodegaDestino).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
+    const trasladosZonas = Array.from(new Set(trasladosRows.filter(r=>r.bodegaDestino).map(r=>r.zonaDestino))).sort((a,b)=>a.localeCompare(b,'es'));
 
     // ---- Tabla_9 Facturas: cruce del Codigo con la tabla Homólogo (homologado / no homologado) ----
     const facturasRaw = byKey.facturas || [];
@@ -3164,7 +3172,7 @@ async function calcularIndicadores(){
     });
     const facturasPuntos = Array.from(new Set(facturasRows.map(r=>r.puntoVenta).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'));
 
-    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues, traslados:trasladosRows, trasladosOrigenes, trasladosDestinos, facturas:facturasRows, facturasPuntos};
+    state.processed={rows, contratos, epsList, epsGrupos, cie10List, zonas, minFecha, maxFecha, hasCargues, traslados:trasladosRows, trasladosOrigenes, trasladosDestinos, trasladosZonas, facturas:facturasRows, facturasPuntos};
     populateFilters();
     populateTrasladosFilters();
     populateFacturasFilters();
@@ -3852,6 +3860,13 @@ function populateTrasladosFilters(){
   const p=state.processed; if(!p) return;
   const selO=document.getElementById('fTrasladoOrigen');
   const selD=document.getElementById('fTrasladoDestino');
+  const selZ=document.getElementById('fTrasladoZona');
+  if(selZ){
+    const prev=selZ.value||'';
+    const ops=p.trasladosZonas||[];
+    selZ.innerHTML='<option value="">Todas las zonas</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+    selZ.value = ops.includes(prev) ? prev : '';
+  }
   if(selO){
     const prev=selO.value||'';
     const ops=p.trasladosOrigenes||[];
@@ -3859,12 +3874,24 @@ function populateTrasladosFilters(){
     selO.value = ops.includes(prev) ? prev : '';
   }
   if(selD){
-    const prev=selD.value||'';
-    const ops=p.trasladosDestinos||[];
-    selD.innerHTML='<option value="">Todas las bodegas destino</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
-    selD.value = ops.includes(prev) ? prev : '';
+    fillTrasladoDestinos();
   }
   renderIndicadorTraslados();
+}
+
+/* Rellena el select de Bodega Destino respetando la zona elegida (si hay). */
+function fillTrasladoDestinos(){
+  const p=state.processed; if(!p) return;
+  const selD=document.getElementById('fTrasladoDestino'); if(!selD) return;
+  const zona=(document.getElementById('fTrasladoZona')||{}).value||'';
+  const prev=selD.value||'';
+  let ops=p.trasladosDestinos||[];
+  if(zona){
+    const permitidas=new Set((p.traslados||[]).filter(r=>r.zonaDestino===zona).map(r=>r.bodegaDestino));
+    ops=ops.filter(o=>permitidas.has(o));
+  }
+  selD.innerHTML='<option value="">Todas las bodegas destino</option>'+ops.map(o=>'<option value="'+escHtml(o)+'">'+escHtml(o)+'</option>').join('');
+  selD.value = ops.includes(prev) ? prev : '';
 }
 
 function renderIndicadorTraslados(){
@@ -3888,9 +3915,11 @@ function renderIndicadorTraslados(){
 
   const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
   const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
+  const zona=(document.getElementById('fTrasladoZona')||{}).value||'';
   const busca=normValue((document.getElementById('fTrasladoUsuario')||{}).value||'');
 
   const filas=all.filter(r=>{
+    if(zona && r.zonaDestino!==zona) return false;
     if(origen && r.bodegaOrigen!==origen) return false;
     if(destino && r.bodegaDestino!==destino) return false;
     return true;
@@ -3982,6 +4011,10 @@ function renderIndicadorTraslados(){
   const el=document.getElementById(id);
   if(el) el.addEventListener('change', renderIndicadorTraslados);
 });
+(function(){
+  const el=document.getElementById('fTrasladoZona');
+  if(el) el.addEventListener('change', function(){ fillTrasladoDestinos(); renderIndicadorTraslados(); });
+})();
 (function(){
   const el=document.getElementById('fTrasladoUsuario');
   if(el) el.addEventListener('input', renderIndicadorTraslados);
@@ -5316,50 +5349,65 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
   showToast('Excel de dispensas inactivas exportado: '+fmtInt(detalle.length)+' dispensas.');
 });
 
+/* Descarga el conteo de traslados RECIBIDOS por bodega destino, agrupado por Zona.
+   Respeta los filtros de la sección: zona (o todas) y bodega destino específica.
+   Se cuentan traslados ÚNICOS: un mismo número de traslado con varias líneas = 1. */
 (function(){
-  const btn=document.getElementById('btnDescargarTraslados');
+  const btn=document.getElementById('btnDescargarTrasladosDestino');
   if(!btn) return;
   btn.addEventListener('click', ()=>{
     const p=state.processed;
     const all=(p && p.traslados) ? p.traslados : [];
     if(!all.length){ showToast('No hay traslados cargados para exportar.', true); return; }
-    if(!_trasladosUsuarioCache.length){ showToast('No hay traslados para los filtros actuales.', true); return; }
 
+    const zona=(document.getElementById('fTrasladoZona')||{}).value||'';
     const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
     const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
-    const total=_trasladosUsuarioCache.reduce((a,u)=>a+u.cant,0);
 
-    const resumen=_trasladosUsuarioCache.map((u,i)=>({
-      '#': i+1,
-      'Usuario': u.usuario,
-      'Traslados realizados': u.cant,
-      'Líneas totales': u.lineas,
-      'Líneas Pareto': u.linPareto,
-      'Líneas No Pareto': u.linNoPareto,
-      'Líneas no homologadas': u.linNoHom,
-      '% del total': total ? u.cant/total : 0
-    }));
-
-    const detalle=all.filter(r=>{
+    const filas=all.filter(r=>{
+      if(zona && r.zonaDestino!==zona) return false;
       if(origen && r.bodegaOrigen!==origen) return false;
       if(destino && r.bodegaDestino!==destino) return false;
       return true;
-    }).map(r=>({
-      'Traslado': r.traslado,
-      'Fecha': r.fecha ? dateToISO(r.fecha) : '',
-      'Bodega Origen': r.bodegaOrigen,
-      'Bodega Destino': r.bodegaDestino,
-      'Codigo': r.codigo,
-      'Usuario': r.usuario,
-      'Molécula Pareto': r.moleculaPareto
+    });
+    if(!filas.length){ showToast('No hay traslados para los filtros actuales.', true); return; }
+
+    // Agrupa por Zona + Bodega Destino contando números de traslado sin repetir.
+    const grupos=new Map();
+    filas.forEach((r,i)=>{
+      const bd=r.bodegaDestino||'SIN BODEGA DESTINO';
+      const zn=r.zonaDestino||'N/D';
+      const k=zn+'||'+bd;
+      if(!grupos.has(k)) grupos.set(k, {zona:zn, bodega:bd, ids:new Set(), lineas:0});
+      const g=grupos.get(k);
+      g.ids.add(r.traslado ? 'T:'+r.traslado : 'F:'+i);
+      g.lineas++;
+    });
+
+    const lista=[...grupos.values()].map(g=>({zona:g.zona, bodega:g.bodega, cant:g.ids.size, lineas:g.lineas}))
+      .sort((a,b)=> a.zona.localeCompare(b.zona,'es') || (b.cant-a.cant) || a.bodega.localeCompare(b.bodega,'es'));
+    const total=lista.reduce((a,g)=>a+g.cant,0);
+
+    const hoja=lista.map(g=>({
+      'Zona': g.zona,
+      'Bodega Destino': g.bodega,
+      'Traslados realizados': g.cant,
+      'Líneas de artículo': g.lineas,
+      '% del total': total ? g.cant/total : 0
     }));
+    hoja.push({
+      'Zona': '', 'Bodega Destino': 'TOTAL ('+lista.length+(lista.length===1?' bodega)':' bodegas)'),
+      'Traslados realizados': total,
+      'Líneas de artículo': lista.reduce((a,g)=>a+g.lineas,0),
+      '% del total': total ? 1 : 0
+    });
 
     const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Traslados por Usuario');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle Traslados');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hoja), 'Traslados por Bodega Destino');
     const fecha=new Date().toISOString().slice(0,10);
-    XLSX.writeFile(wb, 'Traslados_por_Usuario_'+fecha+'.xlsx');
-    showToast('Excel de traslados exportado: '+fmtInt(resumen.length)+' usuarios.');
+    const suf = destino ? '_'+String(destino).replace(/[^\w\-]+/g,'_') : (zona ? '_'+String(zona).replace(/[^\w\-]+/g,'_') : '');
+    XLSX.writeFile(wb, 'Traslados_por_Bodega_Destino'+suf+'_'+fecha+'.xlsx');
+    showToast('Excel exportado: '+fmtInt(lista.length)+' bodegas destino, '+fmtInt(total)+' traslados.');
   });
 })();
 
@@ -5376,9 +5424,11 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
 
     const origen=(document.getElementById('fTrasladoOrigen')||{}).value||'';
     const destino=(document.getElementById('fTrasladoDestino')||{}).value||'';
+    const zonaNH=(document.getElementById('fTrasladoZona')||{}).value||'';
     const busca=normValue((document.getElementById('fTrasladoUsuario')||{}).value||'');
 
     const filas=all.filter(r=>{
+      if(zonaNH && r.zonaDestino!==zonaNH) return false;
       if(origen && r.bodegaOrigen!==origen) return false;
       if(destino && r.bodegaDestino!==destino) return false;
       if(busca && !normValue(r.usuario).includes(busca)) return false;
