@@ -3835,13 +3835,16 @@ function renderComparativos(rows){
     <div class="item"><span class="sw" style="background:#1E8F5E;"></span>Entregadas<span class="val">${fmtInt(lineasEntDespues)}</span></div>
     <div class="item"><span class="sw" style="background:#D98A2B;"></span>Pendientes<span class="val">${fmtInt(lineasTotal-lineasEntDespues)}</span></div>`;
 
-  // --- Soporte Evento: dispensas ENTREGADAS con/sin soporte, antes vs después ---
-  const eventoAntes = base.snap.filter(r=>r.contrato==='EVENTO' && r.documento && base.docPend.get(r.documento)===false);
-  const eventoDespues = actual.snap.filter(r=>r.contrato==='EVENTO' && r.documento && actual.docPend.get(r.documento)===false);
+  // --- Soporte Evento: dispensas de EVENTO con/sin soporte, antes vs después ---
+  // Universo COMÚN (todas las dispensas de evento del periodo): así los soportes
+  // recuperados solo pueden sumar y los faltantes solo pueden bajar.
+  const eventoAntes = base.snap.filter(r=>r.contrato==='EVENTO' && r.documento);
+  const eventoDespues = actual.snap.filter(r=>r.contrato==='EVENTO' && r.documento);
+  const eventoTotalSet = new Set(eventoDespues.map(r=>r.documento));
   const conSopAntes = new Set(eventoAntes.filter(r=>tieneSoporteHastaCorte(r,0)).map(r=>r.documento)).size;
-  const sinSopAntes = new Set(eventoAntes.filter(r=>!tieneSoporteHastaCorte(r,0)).map(r=>r.documento)).size;
+  const sinSopAntes = eventoTotalSet.size - conSopAntes;
   const conSopDespues = new Set(eventoDespues.filter(r=>tieneSoporteHastaCorte(r,3)).map(r=>r.documento)).size;
-  const sinSopDespues = new Set(eventoDespues.filter(r=>!tieneSoporteHastaCorte(r,3)).map(r=>r.documento)).size;
+  const sinSopDespues = eventoTotalSet.size - conSopDespues;
   drawDonut('cmpSoporteInicial', [
     {label:'Con soporte', value: conSopAntes, color:'#0B5FA5'},
     {label:'Sin soporte', value: sinSopAntes, color:'#D98A2B'}
@@ -4768,7 +4771,7 @@ document.getElementById('btnDescargarCodigosComprar').addEventListener('click', 
   if(!filteredRowsCache.length){ showToast('No hay datos calculados para exportar.', true); return; }
   const bodegaSearch = normValue(document.getElementById('fBodegaSearch').value);
   const zona = document.getElementById('fZona').value;
-  const _idxUltimaVersionComprar = new Set(snapshotHastaCorte(filteredRowsCache, 3).map(r=>r.idx));
+  const _idxUltimaVersionComprar = new Set(snapshotUltimaVersion(filteredRowsCache).map(r=>r.idx));
   const aComprar = filteredRowsCache.filter(r=>{
     // El Reporte de Dispensación es acumulativo: se considera solo la ÚLTIMA versión cargada
     // de cada línea, para no contar como pendiente algo que un cargue posterior ya entregó.
@@ -4829,7 +4832,7 @@ document.getElementById('btnDescargarDetalleBodega').addEventListener('click', (
   const bodegaSearch = normValue(bodegaTexto);
   const zona = document.getElementById('fZona').value;
   // Solo la última versión cargada de cada línea (el reporte es acumulativo).
-  const _idxUltima = new Set(snapshotHastaCorte(filteredRowsCache, 3).map(r=>r.idx));
+  const _idxUltima = new Set(snapshotUltimaVersion(filteredRowsCache).map(r=>r.idx));
   const detalle = filteredRowsCache.filter(r=>{
     if(r.versionVigente===false) return false;
     if(!_idxUltima.has(r.idx)) return false;
@@ -5036,19 +5039,20 @@ function getPeriodoDeCarga(iso){
   return day<=10 ? 1 : (day<=20 ? 2 : 3);
 }
 // ¿La dispensa/línea ya tenía soporte al cierre del corte indicado?
-// - Si el soporte venía desde el primer cargue -> cuenta en todos los cortes.
-// - Si el soporte apareció en un cargue posterior (antes venía en 0 / NO TIENE) ->
-//   cuenta solo desde el corte en que se cargó el soporte.
+// - Si hay fecha de soporte (llegó en un cargue posterior), cuenta desde ese corte.
+// - Si no hay fecha de soporte, cuenta desde el corte del cargue en que llegó esa versión
+//   de la línea (antes de ese cargue no se conocía el soporte).
 function tieneSoporteHastaCorte(r, corteMax){
   if(r.tieneSoportes!=='TIENE SOPORTE') return false;
-  if(!r.fechaSoporte) return true;
-  const p=getPeriodoDeCarga(r.fechaSoporte);
+  const p = r.fechaSoporte ? getPeriodoDeCarga(r.fechaSoporte) : corteDeCargue(r);
   return p===null ? true : p<=corteMax;
 }
 // Corte en el que la línea recuperó el soporte (null si nunca estuvo en 0).
 function corteRecuperacionSoporte(r){
-  if(r.tieneSoportes!=='TIENE SOPORTE' || !r.fechaSoporte) return null;
-  return getPeriodoDeCarga(r.fechaSoporte);
+  if(r.tieneSoportes!=='TIENE SOPORTE') return null;
+  const p = r.fechaSoporte ? getPeriodoDeCarga(r.fechaSoporte) : corteDeCargue(r);
+  if(p===null || p<=0) return null;
+  return p;
 }
 // Identidad de una línea a través de los distintos cargues del Reporte de Dispensación.
 function claveLineaCargue(r){
@@ -5083,20 +5087,42 @@ function corteVigenteHasta(activos, corte){
   for(let c=corte;c>=1;c--) if(activos.has(c)) return c;
   return 0;
 }
-// Foto de cada línea al cierre del corte indicado: se toma la ÚLTIMA versión cargada
-// cuyo cargue cae en ese corte o en uno anterior (así el cargue nuevo reemplaza al viejo:
-// lo que estaba pendiente y vuelve a llegar entregado, queda entregado).
-// El corte 0 es la línea base: la PRIMERA versión con la que apareció cada línea.
+// GESTIÓN ACUMULADA con universo COMÚN en los 3 cortes.
+// El total de líneas/dispensas es el MISMO en todos los cortes (todas las líneas
+// conocidas del periodo). Lo que cambia corte a corte es su estado:
+// - Estado inicial de una línea = la PRIMERA versión con la que apareció (línea base, corte 0).
+// - En cada corte se toma la MEJOR versión conocida hasta ese corte: si en algún cargue
+//   anterior o igual ya llegó entregada (o ya trajo soporte), no vuelve atrás.
+// - Si la línea todavía no se había cargado en ese corte, conserva su estado inicial.
+// Resultado: las entregas solo pueden SUBIR y los pendientes solo pueden BAJAR de un
+// corte al siguiente (ej. 14/7 → 15/6), nunca al contrario.
+function _puntajeGestion(r){
+  return (r.lineaPendiente==='NO' ? 2 : 0) + (r.tieneSoportes==='TIENE SOPORTE' ? 1 : 0);
+}
 function snapshotHastaCorte(rows, corteMax){
-  const porLinea=new Map();
+  const primera=new Map(), mejor=new Map();
   rows.forEach(r=>{
     const k=claveLineaCargue(r);
-    const prev=porLinea.get(k);
-    if(corteMax===0){
-      if(!prev || esVersionPosterior(prev, r)) porLinea.set(k, r);
-      return;
+    const ini=primera.get(k);
+    if(!ini || esVersionPosterior(ini, r)) primera.set(k, r);   // versión más antigua
+    if(corteMax>0 && corteDeCargue(r)<=corteMax){
+      const m=mejor.get(k);
+      if(!m){ mejor.set(k, r); return; }
+      const dif=_puntajeGestion(r)-_puntajeGestion(m);
+      if(dif>0 || (dif===0 && esVersionPosterior(r, m))) mejor.set(k, r);
     }
-    if(corteDeCargue(r)>corteMax) return;
+  });
+  if(corteMax===0) return Array.from(primera.values());
+  const out=[];
+  primera.forEach((rIni,k)=>{ out.push(mejor.get(k) || rIni); });
+  return out;
+}
+// Última versión cargada de cada línea (para exportables de estado actual).
+function snapshotUltimaVersion(rows){
+  const porLinea=new Map();
+  (rows||[]).forEach(r=>{
+    const k=claveLineaCargue(r);
+    const prev=porLinea.get(k);
     if(!prev || esVersionPosterior(r, prev)) porLinea.set(k, r);
   });
   return Array.from(porLinea.values());
@@ -5121,36 +5147,43 @@ function buildCorteMetrics(rows){
   [0,1,2,3].forEach(corte=>{
     const {snap, lineaPend, docPend} = calcularEstadoHastaCorte(rows, corte);
     const byBodega=new Map();
-    snap.forEach(r=>{
+    const ensureG=(r)=>{
       if(!byBodega.has(r.bodegaDetalle)) byBodega.set(r.bodegaDetalle, {
         bodega:r.bodegaDetalle, zona:r.zona, docsSet:new Set(), docsEntSet:new Set(),
-        lineas:0, lineasEnt:0, eventoSet:new Set(), eventoConSet:new Set(), eventoSinSet:new Set(),
+        lineas:0, lineasEnt:0, eventoSet:new Set(), eventoConSet:new Set(),
         eventoRecSet:new Set(), eventoRecAcumSet:new Set()
       });
-      const g=byBodega.get(r.bodegaDetalle);
+      return byBodega.get(r.bodegaDetalle);
+    };
+    snap.forEach(r=>{
+      const g=ensureG(r);
       if(r.documento){
         g.docsSet.add(r.documento);
-        if(docPend.get(r.documento)===false){
-          g.docsEntSet.add(r.documento);
-          if(r.contrato==='EVENTO'){
-            g.eventoSet.add(r.documento);
-            if(tieneSoporteHastaCorte(r, corte)) g.eventoConSet.add(r.documento); else g.eventoSinSet.add(r.documento);
-            const cRec=corteRecuperacionSoporte(r);
-            if(cRec!==null && cRec<=corte){
-              g.eventoRecAcumSet.add(r.documento);
-              if(cRec===corte) g.eventoRecSet.add(r.documento);
-            }
-          }
-        }
+        if(docPend.get(r.documento)===false) g.docsEntSet.add(r.documento);
       }
       g.lineas++;
       if(lineaPend.get(r.idx)==='NO') g.lineasEnt++;
+    });
+    // Soportes de EVENTO: el universo son TODAS las dispensas de evento del periodo
+    // (mismo total en los 3 cortes). “Con soporte” solo puede crecer: un soporte que
+    // llegó en un cargue suma en ese corte y ya no se pierde en los cortes siguientes.
+    rows.forEach(r=>{
+      if(r.contrato!=='EVENTO' || !r.documento) return;
+      const g=ensureG(r);
+      g.eventoSet.add(r.documento);
+      if(tieneSoporteHastaCorte(r, corte)) g.eventoConSet.add(r.documento);
+      if(corte>0 && tieneSoporteHastaCorte(r, corte) && !tieneSoporteHastaCorte(r, corte-1)){
+        g.eventoRecSet.add(r.documento);
+      }
+      if(corte>0 && tieneSoporteHastaCorte(r, corte) && !tieneSoporteHastaCorte(r, 0)){
+        g.eventoRecAcumSet.add(r.documento);
+      }
     });
     out[corte]=Array.from(byBodega.values()).map(g=>({
       bodega:g.bodega, zona:g.zona,
       docsTotal:g.docsSet.size, docsEnt:g.docsEntSet.size, docsPend:g.docsSet.size-g.docsEntSet.size,
       lineasTotal:g.lineas, lineasEnt:g.lineasEnt, lineasPend:g.lineas-g.lineasEnt,
-      eventoTotal:g.eventoSet.size, eventoCon:g.eventoConSet.size, eventoSin:g.eventoSinSet.size,
+      eventoTotal:g.eventoSet.size, eventoCon:g.eventoConSet.size, eventoSin:g.eventoSet.size-g.eventoConSet.size,
       eventoRec:g.eventoRecSet.size, eventoRecAcum:g.eventoRecAcumSet.size
     })).sort((a,b)=>(a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es'));
   });
