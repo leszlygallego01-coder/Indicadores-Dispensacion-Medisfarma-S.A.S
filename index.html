@@ -3388,14 +3388,16 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const hayPrevSeg    = corteFinalSeg>0;
   const tituloPrevSeg = cortePrevSeg===0 ? 'primer cargue (línea base)' : 'corte '+cortePrevSeg;
   // Celda con dos cifras: estado del corte seleccionado (negro) y el del corte anterior (gris).
-  const celdaDoble = (act, ant) => '<td class="num" title="Actual: corte '+corteFinalSeg+' · Anterior: '+tituloPrevSeg+'">'
-      + fmtInt(act)
-      + (hayPrevSeg ? '<span style="color:#9CA9B6;font-weight:500;"> · ' + fmtInt(ant) + '</span>' : '')
-      + '</td>';
+  const celdaDoble = (act, ant) => (act===ant
+      ? '<td class="num" title="Sin cambios frente al ' + tituloPrevSeg + '">' + fmtInt(act) + '</td>'
+      : '<td class="num" title="Actual: corte '+corteFinalSeg+' · Anterior: '+tituloPrevSeg+'">'
+        + fmtInt(act)
+        + (hayPrevSeg ? '<span style="color:#9CA9B6;font-weight:500;"> · ' + fmtInt(ant) + '</span>' : '')
+        + '</td>');
   const mirrorEl = document.getElementById('segCorteGlobal');
   if(mirrorEl) mirrorEl.value = String(corteGlobalSeg);
   const infoEl = document.getElementById('segCorteGlobalInfo');
-  if(infoEl) infoEl.textContent = 'Las columnas por corte muestran “—” cuando la bodega no tuvo cambios frente al corte anterior.';
+  if(infoEl) infoEl.textContent = 'Las columnas por corte solo muestran cifras cuando la bodega tuvo cambios reales; si no hubo cambios frente al estado anterior aparece “—”.';
   const _idxPend = (b) => {
     const m = bodegaMetrics[b][corteFinalSeg] || {docsTotal:0, docsEnt:0, docsPend:0};
     const tot = m.docsTotal !== undefined ? m.docsTotal : (m.docsEnt + m.docsPend);
@@ -3463,17 +3465,36 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   drawSegDonut();
   selEl.onchange = drawSegDonut;
 
+  // ¿En qué cortes hubo realmente cambios? Se compara cada corte con el estado anterior
+  // de la MISMA bodega (partiendo de la línea base). Si no hay cambio no se muestran cifras.
+  const cambioPorBodega = {};
+  const corteConCambio = {};
+  bodegas.forEach(b => {
+    cambioPorBodega[b] = {};
+    let ref = bodegaMetrics[b][0] || null;
+    for(let c=1; c<=NUM_CORTES; c++){
+      if(c>corteGlobalSeg || !cortesActivos.has(c)) continue;
+      const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
+      const cambio = !(ref && ref.docsEnt===cd.docsEnt && ref.docsPend===cd.docsPend);
+      cambioPorBodega[b][c] = cambio;
+      if(cambio) corteConCambio[c] = true;
+      ref = cd;
+    }
+  });
+
   // Build table
   // Header: Bodega | Entregas totales | Pendientes totales | Entregas Corte 1 | Pendientes Corte 1 | ...
   let hHtml = '<tr><th rowspan="2">Bodega</th><th rowspan="2">Entregas totales<br><span style="font-weight:600;font-size:10.5px;color:#9CA9B6;">actual · anterior</span></th><th rowspan="2">Pendientes totales<br><span style="font-weight:600;font-size:10.5px;color:#9CA9B6;">actual · anterior</span></th><th rowspan="2">Índice de Pendientes</th>';
   for(let c=1; c<=NUM_CORTES; c++){
     if(c>corteGlobalSeg) hHtml += '<th colspan="2" style="color:#C3CCD6;">Corte ' + c + '</th>';
+    else if(cortesActivos.has(c) && !corteConCambio[c]) hHtml += '<th colspan="2" style="color:#9CA9B6;">Corte ' + c + ' <span style="font-weight:600;">· sin cambios</span></th>';
     else hHtml += '<th colspan="2">Corte ' + c + '</th>';
   }
   void 0;
   hHtml += '</tr><tr>';
   for(let c=1; c<=NUM_CORTES; c++){
     if(c>corteGlobalSeg) hHtml += '<th style="color:#C3CCD6;">Fuera del corte</th><th style="color:#C3CCD6;">Fuera del corte</th>';
+    else if(cortesActivos.has(c) && !corteConCambio[c]) hHtml += '<th style="color:#9CA9B6;">Sin cambios</th><th style="color:#9CA9B6;">Sin cambios</th>';
     else if(cortesActivos.has(c)) hHtml += '<th>Entregas</th><th>Pendientes</th>';
     else hHtml += '<th style="color:#9CA9B6;">Sin cargue</th><th style="color:#9CA9B6;">Sin cargue</th>';
   }
@@ -3492,19 +3513,17 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
     const ipTotal = c3.docsTotal !== undefined ? c3.docsTotal : (c3.docsEnt + c3.docsPend);
     const iPend = ipTotal ? c3.docsPend / ipTotal : null;
     bHtml += '<td class="' + effClass(iPend) + '">' + fmtPct(iPend) + '</td>';
-    let ref = null; // último corte con datos mostrados para esta bodega
     for(let c=1; c<=NUM_CORTES; c++){
       if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
       if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
       const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
-      // Solo se muestran cifras cuando la bodega cambió respecto al corte anterior vigente.
-      if(ref && ref.docsEnt === cd.docsEnt && ref.docsPend === cd.docsPend){
+      // Solo se muestran cifras cuando la bodega cambió respecto al estado anterior.
+      if(!cambioPorBodega[b][c]){
         bHtml += tdSinCambio + tdSinCambio;
       } else {
         bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
         bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
       }
-      ref = cd;
     }
     bHtml += '</tr>';
   });
@@ -3518,7 +3537,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const t3DocsTotal = t3.docsTotal !== undefined ? t3.docsTotal : (t3.docsEnt + t3.docsPend);
   const t3IPend = t3DocsTotal ? t3.docsPend / t3DocsTotal : null;
   bHtml += '<td class="' + effClass(t3IPend) + '">' + fmtPct(t3IPend) + '</td>';
-  let refTot = null;
+  let refTot = totRow[0] || null;
   for(let c=1; c<=NUM_CORTES; c++){
     if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
     if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
@@ -5706,6 +5725,8 @@ function renderReportePeriodico(){
     });
 
   const tot={total:0, ent:0, pend:0, c:[{ent:0,pend:0},{ent:0,pend:0},{ent:0,pend:0}], rec:[0,0,0], recTotal:0};
+  let totBaseEnt=0, totBasePend=0;
+  filas.forEach(f=>{ totBaseEnt+=f.base.ent; totBasePend+=f.base.pend; });
   filas.forEach(f=>{
     tot.total+=f.total; tot.ent+=f.entFinal; tot.pend+=f.pendFinal; tot.recTotal+=f.recTotal;
     [0,1,2].forEach(i=>{ tot.c[i].ent+=f.cortes[i].ent; tot.c[i].pend+=f.cortes[i].pend; tot.rec[i]+=f.rec[i]; });
@@ -5716,8 +5737,8 @@ function renderReportePeriodico(){
   const tdFueraRP='<td style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">'+DASH+'</td>';
   const tdSinCambioRP='<td '+dim+' title="Sin cambios frente al corte anterior: esta bodega no presentó movimientos nuevos en este corte">'+DASH+'</td>';
   // Solo se muestran cifras cuando el corte trae cambios reales frente al corte previo mostrado.
-  const marcaSinCambio = (arr) => {
-    let ref=null;
+  const marcaSinCambio = (arr, base) => {
+    let ref = base || null;
     return arr.map(cc=>{
       if(cc.fuera || cc.sin) return Object.assign({}, cc, {igual:false});
       const igual = !!ref && ref.ent===cc.ent && ref.pend===cc.pend;
@@ -5725,8 +5746,11 @@ function renderReportePeriodico(){
       return Object.assign({}, cc, {igual:igual});
     });
   };
-  let cuerpo=filas.map(f=>{
-    const cortesMk = marcaSinCambio(f.cortes);
+  const filasMk = filas.map(f=>marcaSinCambio(f.cortes, f.base));
+  // Un corte solo se rotula con cifras si al menos una bodega cambió en ese corte.
+  const rpCambio = [0,1,2].map(i=>filasMk.some(mk=>!mk[i].fuera && !mk[i].sin && !mk[i].igual));
+  let cuerpo=filas.map((f,fi)=>{
+    const cortesMk = filasMk[fi];
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
       +'<td>'+fmtInt(f.entFinal)+'</td>'
@@ -5744,7 +5768,7 @@ function renderReportePeriodico(){
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
     +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
-  const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})));
+  const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})), {ent:totBaseEnt, pend:totBasePend});
   [0,1,2].forEach(i=>{
     if(totMk[i].fuera){ filaTotal+=tdFueraRP+tdFueraRP; return; }
     if(totMk[i].sin){ filaTotal+=tdSinCargue+tdSinCargue; return; }
@@ -5755,13 +5779,22 @@ function renderReportePeriodico(){
 
   const etiqCorte = (c, txt) => fuera(c)
     ? '<th colspan="2" style="color:#C3CCD6;">'+txt+' <span style="font-weight:600;">· fuera del corte</span></th>'
-    : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
+    : (activo(c) && !rpCambio[c-1])
+      ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin cambios</span></th>'
+      : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
   let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th><th rowspan="2">'+labelEnt+' totales</th><th rowspan="2">'+labelPend+' totales</th><th rowspan="2">Índice de Pendientes</th>'
     +etiqCorte(1,'Corte 1 (1-10)')
     +etiqCorte(2,'Corte 2 (11-20)')
     +etiqCorte(3,'Corte 3 (21-31)')
     +'<th rowspan="2">'+labelRec+'</th></tr>';
-  let ths2='<tr><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th></tr>';
+  const subCorte = (c) => fuera(c)
+    ? '<th style="color:#C3CCD6;">Fuera del corte</th><th style="color:#C3CCD6;">Fuera del corte</th>'
+    : !activo(c)
+      ? '<th style="color:#9CA9B6;">Sin cargue</th><th style="color:#9CA9B6;">Sin cargue</th>'
+      : !rpCambio[c-1]
+        ? '<th style="color:#9CA9B6;">Sin cambios</th><th style="color:#9CA9B6;">Sin cambios</th>'
+        : '<th>'+labelEnt+'</th><th>'+labelPend+'</th>';
+  let ths2='<tr>'+subCorte(1)+subCorte(2)+subCorte(3)+'</tr>';
 
   // ---- 3 gráficos, uno por corte (acumulado al cierre de cada corte) ----
   // Un corte sin cargue se muestra vacío: no hereda ni repite las cifras del corte anterior.
