@@ -445,6 +445,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           </div>
         </div>
       </div>
+      <div class="field"><label>Corte del periodo</label>
+        <select id="fCorte" title="Define el corte que se toma como estado vigente en los totales, el gráfico y el comparativo">
+          <option value="1">Corte 1 (días 1-10)</option>
+          <option value="2">Corte 2 (días 11-20)</option>
+          <option value="3" selected>Corte 3 (días 21-31)</option>
+        </select>
+      </div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
       <div class="field" style="margin-left:auto;"><label>&nbsp;</label><button class="btn btn-export" id="btnExportar">⬇ Exportar a Excel</button></div>
@@ -496,6 +503,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <div class="seguimiento-corte-sel">
               <label>Corte a visualizar en gráfico:</label>
               <select id="segCorteSelect"></select>
+              <span id="segCorteGlobalInfo" style="font-size:12px;color:var(--ink-soft);"></span>
             </div>
             <div class="seg-chart-row">
               <div class="seg-chart-card">
@@ -507,6 +515,16 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                 <table class="data" id="tblSeguimiento">
                   <thead id="tblSeguimientoHead"></thead>
                   <tbody id="tblSeguimientoBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="corte-card" style="margin-top:14px;">
+              <h4>Reasignación mensual de entregas</h4>
+              <p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cuando un pendiente se entrega en un mes posterior, la entrega <strong>cuenta en el mes en que se realizó</strong> y se <strong>descuenta del mes que originó el pendiente</strong>. Así ningún mes queda con una entrega que no le corresponde y el mes de origen deja de arrastrar ese pendiente.</p>
+              <div class="table-wrap" style="max-height:340px;margin-bottom:0;">
+                <table class="data" id="tblSegMeses">
+                  <thead id="tblSegMesesHead"></thead>
+                  <tbody id="tblSegMesesBody"></tbody>
                 </table>
               </div>
             </div>
@@ -3170,6 +3188,19 @@ function populateFilters(){
   if(p.maxFecha) document.getElementById('fFechaHasta').value=dateToISO(p.maxFecha);
 }
 document.getElementById('btnAplicarFiltro').addEventListener('click', aplicarFiltrosYRenderizar);
+// Corte global: define hasta qué corte del mes se considera la información cargada.
+// Afecta las columnas de totales, el gráfico de cumplimiento y el Reporte Comparativo.
+function getCorteGlobal(){
+  const el=document.getElementById('fCorte');
+  const v=el? +el.value : 3;
+  return (v>=1 && v<=3) ? v : 3;
+}
+document.getElementById('fCorte').addEventListener('change', ()=>{
+  _segLastCorte = getCorteGlobal();
+  aplicarFiltrosYRenderizar();
+  const modal=document.getElementById('periodicModal');
+  if(modal && modal.classList.contains('show')) renderReportePeriodico();
+});
 // Se aplica automáticamente también al cambiar cualquiera de los campos (no solo con el botón),
 // para que volver a poner la fecha completa (o cualquier otro valor) siempre recalcule.
 ['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo'].forEach(id=>{
@@ -3316,6 +3347,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const hayCargues = cortesActivos.size > 0;
   const DASH = '—';
   const tdVacio = '<td class="num" style="color:#9CA9B6;" title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">' + DASH + '</td>';
+  const tdFuera = '<td class="num" style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">' + DASH + '</td>';
   // Collect unique bodegas from all cortes
   const bodegaSet = new Set();
   [1,2,3].forEach(c => (cmAll[c]||[]).forEach(bm => bodegaSet.add(bm.bodega)));
@@ -3324,14 +3356,25 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   // Build a lookup: bodegaMetrics[bodega][corte] = {docsTotal, docsEnt, docsPend, ...}
   const bodegaMetrics = {};
   bodegas.forEach(b => { bodegaMetrics[b] = {}; });
-  [1,2,3].forEach(c => {
-    (cmAll[c]||[]).forEach(bm => { bodegaMetrics[bm.bodega][c] = bm; });
+  [0,1,2,3].forEach(c => {
+    (cmAll[c]||[]).forEach(bm => { if(bodegaMetrics[bm.bodega]) bodegaMetrics[bm.bodega][c] = bm; });
   });
   // Ordenar bodegas ESTRICTAMENTE por Índice de Pendientes (mayor a menor).
   // Se usa la misma fórmula que la celda "Índice de Pendientes" (corte 3 = acumulado final):
   // Índice = Pendientes totales / Documentos totales. Desempate: más pendientes primero,
   // luego orden alfabético para que el resultado sea estable.
-  const corteFinalSeg = corteVigenteHasta(cortesActivos, 3);
+  const corteGlobalSeg = getCorteGlobal();
+  const corteFinalSeg = corteVigenteHasta(cortesActivos, corteGlobalSeg);
+  const cortePrevSeg  = corteFinalSeg>0 ? corteVigenteHasta(cortesActivos, corteFinalSeg-1) : 0;
+  const hayPrevSeg    = corteFinalSeg>0;
+  const tituloPrevSeg = cortePrevSeg===0 ? 'primer cargue (línea base)' : 'corte '+cortePrevSeg;
+  // Celda con dos cifras: estado del corte seleccionado (negro) y el del corte anterior (gris).
+  const celdaDoble = (act, ant) => '<td class="num" title="Actual: corte '+corteFinalSeg+' · Anterior: '+tituloPrevSeg+'">'
+      + fmtInt(act)
+      + (hayPrevSeg ? '<span style="color:#9CA9B6;font-weight:500;"> · ' + fmtInt(ant) + '</span>' : '')
+      + '</td>';
+  const infoEl = document.getElementById('segCorteGlobalInfo');
+  if(infoEl) infoEl.textContent = 'Los totales y el gráfico usan el corte global seleccionado en los filtros (corte '+corteGlobalSeg+').';
   const _idxPend = (b) => {
     const m = bodegaMetrics[b][corteFinalSeg] || {docsTotal:0, docsEnt:0, docsPend:0};
     const tot = m.docsTotal !== undefined ? m.docsTotal : (m.docsEnt + m.docsPend);
@@ -3348,30 +3391,29 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
 
   // Compute totals row per corte
   const totRow = {};
-  for(let c=1; c<=NUM_CORTES; c++){
+  for(let c=0; c<=NUM_CORTES; c++){
     let dT=0,dE=0,dP=0;
-    if(cortesActivos.has(c)){
+    if(c===0 || cortesActivos.has(c)){
       bodegas.forEach(b => {
         const cd = bodegaMetrics[b][c];
         if(cd){ dT+=cd.docsTotal; dE+=cd.docsEnt; dP+=cd.docsPend; }
       });
     }
-    totRow[c] = { docsTotal:dT, docsEnt:dE, docsPend:dP, sinCargue: !cortesActivos.has(c) };
+    totRow[c] = { docsTotal:dT, docsEnt:dE, docsPend:dP, sinCargue: c>0 && !cortesActivos.has(c) };
   }
 
   // Populate corte selector
   const selEl = document.getElementById('segCorteSelect');
   const prevVal = selEl.value;
   selEl.innerHTML = '';
-  for(let c=1; c<=NUM_CORTES; c++){
+  for(let c=1; c<=corteGlobalSeg; c++){
     const opt = document.createElement('option');
     opt.value = c;
     opt.textContent = 'Corte ' + c + (cortesActivos.has(c) ? '' : ' (sin cargue)');
     selEl.appendChild(opt);
   }
-  const ultimoActivo = [3,2,1].find(c => cortesActivos.has(c)) || NUM_CORTES;
-  if(prevVal && +prevVal <= NUM_CORTES) selEl.value = prevVal;
-  else selEl.value = (cortesActivos.has(_segLastCorte) ? _segLastCorte : ultimoActivo);
+  const ultimoActivo = [3,2,1].find(c => cortesActivos.has(c) && c<=corteGlobalSeg) || corteGlobalSeg;
+  selEl.value = (cortesActivos.has(corteGlobalSeg) ? corteGlobalSeg : ultimoActivo);
 
   // Render donut for selected corte
   function drawSegDonut(){
@@ -3402,14 +3444,16 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
 
   // Build table
   // Header: Bodega | Entregas totales | Pendientes totales | Entregas Corte 1 | Pendientes Corte 1 | ...
-  let hHtml = '<tr><th rowspan="2">Bodega</th><th rowspan="2">Entregas totales</th><th rowspan="2">Pendientes totales</th><th rowspan="2">Índice de Pendientes</th>';
+  let hHtml = '<tr><th rowspan="2">Bodega</th><th rowspan="2">Entregas totales<br><span style="font-weight:600;font-size:10.5px;color:#9CA9B6;">actual · anterior</span></th><th rowspan="2">Pendientes totales<br><span style="font-weight:600;font-size:10.5px;color:#9CA9B6;">actual · anterior</span></th><th rowspan="2">Índice de Pendientes</th>';
   for(let c=1; c<=NUM_CORTES; c++){
-    hHtml += '<th colspan="2">Corte ' + c + '</th>';
+    if(c>corteGlobalSeg) hHtml += '<th colspan="2" style="color:#C3CCD6;">Corte ' + c + '</th>';
+    else hHtml += '<th colspan="2">Corte ' + c + '</th>';
   }
   void 0;
   hHtml += '</tr><tr>';
   for(let c=1; c<=NUM_CORTES; c++){
-    if(cortesActivos.has(c)) hHtml += '<th>Entregas</th><th>Pendientes</th>';
+    if(c>corteGlobalSeg) hHtml += '<th style="color:#C3CCD6;">Fuera del corte</th><th style="color:#C3CCD6;">Fuera del corte</th>';
+    else if(cortesActivos.has(c)) hHtml += '<th>Entregas</th><th>Pendientes</th>';
     else hHtml += '<th style="color:#9CA9B6;">Sin cargue</th><th style="color:#9CA9B6;">Sin cargue</th>';
   }
   hHtml += '</tr>';
@@ -3419,14 +3463,16 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   let bHtml = '';
   bodegas.forEach(b => {
     const c3 = bodegaMetrics[b][corteFinalSeg] || {docsEnt:0,docsPend:0};
+    const cPrevB = bodegaMetrics[b][cortePrevSeg] || {docsEnt:0,docsPend:0};
     bHtml += '<tr><td>' + escHtml(b) + '</td>';
-    bHtml += '<td class="num">' + fmtInt(c3.docsEnt) + '</td>';
-    bHtml += '<td class="num">' + fmtInt(c3.docsPend) + '</td>';
+    bHtml += celdaDoble(c3.docsEnt, cPrevB.docsEnt);
+    bHtml += celdaDoble(c3.docsPend, cPrevB.docsPend);
     // Índice de Pendientes
     const ipTotal = c3.docsTotal !== undefined ? c3.docsTotal : (c3.docsEnt + c3.docsPend);
     const iPend = ipTotal ? c3.docsPend / ipTotal : null;
     bHtml += '<td class="' + effClass(iPend) + '">' + fmtPct(iPend) + '</td>';
     for(let c=1; c<=NUM_CORTES; c++){
+      if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
       if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
       const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
       bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
@@ -3436,14 +3482,16 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   });
   // Totals row
   const t3 = totRow[corteFinalSeg] || {docsEnt:0,docsPend:0};
+  const tPrev = totRow[cortePrevSeg] || {docsEnt:0,docsPend:0};
   bHtml += '<tr class="total-row"><td>TOTAL</td>';
-  bHtml += '<td class="num">' + fmtInt(t3.docsEnt) + '</td>';
-  bHtml += '<td class="num">' + fmtInt(t3.docsPend) + '</td>';
+  bHtml += celdaDoble(t3.docsEnt, tPrev.docsEnt);
+  bHtml += celdaDoble(t3.docsPend, tPrev.docsPend);
   // Total Índice de Pendientes
   const t3DocsTotal = t3.docsTotal !== undefined ? t3.docsTotal : (t3.docsEnt + t3.docsPend);
   const t3IPend = t3DocsTotal ? t3.docsPend / t3DocsTotal : null;
   bHtml += '<td class="' + effClass(t3IPend) + '">' + fmtPct(t3IPend) + '</td>';
   for(let c=1; c<=NUM_CORTES; c++){
+    if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
     if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
     const cd = totRow[c] || {docsEnt:0,docsPend:0};
     bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
@@ -3451,6 +3499,139 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   }
   bHtml += '</tr>';
   document.getElementById('tblSeguimientoBody').innerHTML = bHtml;
+
+  renderSegMeses(filtered, corteGlobalSeg);
+}
+
+/* -------------------------------------------------------------------------
+   Reasignación mensual de entregas
+   Una entrega realizada en un mes posterior cuenta en el mes en que se hizo y
+   se descuenta del mes que originó el pendiente (aplica a dispensas y líneas).
+   ------------------------------------------------------------------------- */
+const MESES_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function ymDeFecha(iso){
+  if(!iso) return null;
+  const s = String(iso).slice(0,7);
+  return /^\d{4}-\d{2}$/.test(s) ? s : null;
+}
+function etiquetaMes(ym){
+  if(ym==='0000-00') return 'Sin fecha de cargue';
+  const p = ym.split('-');
+  const mi = parseInt(p[1],10)-1;
+  return (MESES_ES[mi]||p[1]) + '. ' + p[0];
+}
+function renderSegMeses(rows, corteGlobal){
+  const headEl = document.getElementById('tblSegMesesHead');
+  const bodyEl = document.getElementById('tblSegMesesBody');
+  if(!headEl || !bodyEl) return;
+  const SIN_FECHA = '0000-00';
+
+  // Solo versiones visibles según el corte global (los cortes son días dentro del mes).
+  const visibles = (rows||[]).filter(r => {
+    if(!r.fechaCargue) return true;                        // línea base
+    const p = getPeriodoDeCarga(r.fechaCargue);
+    return p===null || p<=corteGlobal;
+  });
+
+  // Agrupar versiones por línea y ordenarlas cronológicamente.
+  const porLinea = new Map();
+  visibles.forEach(r => {
+    const k = claveLineaCargue(r);
+    if(!porLinea.has(k)) porLinea.set(k, []);
+    porLinea.get(k).push(r);
+  });
+
+  const lineaInfo = [];                 // {mesOrigen, mesEntrega, documento}
+  const docsMap = new Map();            // documento -> {mesOrigen, meses:[], completo}
+  porLinea.forEach(vs => {
+    vs.sort((a,b) => esVersionPosterior(a,b) ? 1 : -1);
+    const mesOrigen = ymDeFecha(vs[0].fechaCargue) || SIN_FECHA;
+    let mesEntrega = null;
+    for(let i=0;i<vs.length;i++){
+      if(vs[i].lineaPendiente==='NO'){
+        mesEntrega = ymDeFecha(vs[i].fechaCargue) || mesOrigen;
+        if(mesEntrega < mesOrigen) mesEntrega = mesOrigen;
+        break;
+      }
+    }
+    lineaInfo.push({ mesOrigen: mesOrigen, mesEntrega: mesEntrega });
+    const doc = vs[0].documento;
+    if(!doc) return;
+    if(!docsMap.has(doc)) docsMap.set(doc, { mesOrigen: mesOrigen, mesEntrega: mesOrigen, completo: true });
+    const d = docsMap.get(doc);
+    if(mesOrigen < d.mesOrigen) d.mesOrigen = mesOrigen;
+    if(mesEntrega===null) d.completo = false;
+    else if(mesEntrega > d.mesEntrega) d.mesEntrega = mesEntrega;   // el documento cierra con su última línea
+  });
+
+  // Acumular por mes: dispensas (documentos) y líneas.
+  const meses = new Map();
+  const ensureMes = (ym) => {
+    if(!meses.has(ym)) meses.set(ym, {
+      dOrig:0, dEnt:0, dRec:0, dDesc:0, dPend:0,
+      lOrig:0, lEnt:0, lRec:0, lDesc:0, lPend:0
+    });
+    return meses.get(ym);
+  };
+  const acumular = (mesOrigen, mesEntrega, pref) => {
+    const mo = ensureMes(mesOrigen);
+    mo[pref+'Orig']++;
+    if(mesEntrega===null){ mo[pref+'Pend']++; return; }
+    const me = ensureMes(mesEntrega);
+    me[pref+'Ent']++;                               // la entrega cuenta en el mes en que se hizo
+    if(mesEntrega!==mesOrigen){
+      me[pref+'Rec']++;                             // recibida de un mes anterior
+      mo[pref+'Desc']++;                            // se descuenta del mes que originó el pendiente
+    }
+  };
+  lineaInfo.forEach(l => acumular(l.mesOrigen, l.mesEntrega, 'l'));
+  docsMap.forEach(d => acumular(d.mesOrigen, d.completo ? d.mesEntrega : null, 'd'));
+
+  const claves = Array.from(meses.keys()).sort();
+  if(!claves.length){
+    headEl.innerHTML = '';
+    bodyEl.innerHTML = '<tr><td style="color:var(--ink-soft);">Aún no hay cargues con fecha para reasignar entregas por mes.</td></tr>';
+    return;
+  }
+
+  headEl.innerHTML = '<tr><th rowspan="2">Mes</th><th colspan="5">Dispensas</th><th colspan="5">Líneas</th></tr>'
+    + '<tr>'
+    + '<th title="Dispensas que aparecieron por primera vez en el mes">Originadas</th>'
+    + '<th title="Entregas contadas en el mes en que realmente se hicieron">Entregas del mes</th>'
+    + '<th title="Entregas que venían pendientes de meses anteriores">Recibidas (+)</th>'
+    + '<th title="Pendientes del mes que se entregaron después y por eso se descuentan de este mes">Descontadas (−)</th>'
+    + '<th title="Pendientes del mes que siguen sin entregar">Pendientes</th>'
+    + '<th title="Líneas que aparecieron por primera vez en el mes">Originadas</th>'
+    + '<th title="Entregas contadas en el mes en que realmente se hicieron">Entregas del mes</th>'
+    + '<th title="Entregas que venían pendientes de meses anteriores">Recibidas (+)</th>'
+    + '<th title="Pendientes del mes que se entregaron después y por eso se descuentan de este mes">Descontadas (−)</th>'
+    + '<th title="Líneas del mes que siguen sin entregar">Pendientes</th>'
+    + '</tr>';
+
+  const T = { dOrig:0,dEnt:0,dRec:0,dDesc:0,dPend:0, lOrig:0,lEnt:0,lRec:0,lDesc:0,lPend:0 };
+  const gris = (v) => v ? '<td class="num">' + fmtInt(v) + '</td>' : '<td class="num" style="color:#B7C2CD;">0</td>';
+  let html = '';
+  claves.forEach(ym => {
+    const m = meses.get(ym);
+    Object.keys(T).forEach(k => { T[k] += m[k]; });
+    html += '<tr><td>' + escHtml(etiquetaMes(ym)) + '</td>'
+      + '<td class="num">' + fmtInt(m.dOrig) + '</td>'
+      + '<td class="num">' + fmtInt(m.dEnt) + '</td>'
+      + gris(m.dRec) + gris(m.dDesc)
+      + '<td class="num">' + fmtInt(m.dPend) + '</td>'
+      + '<td class="num">' + fmtInt(m.lOrig) + '</td>'
+      + '<td class="num">' + fmtInt(m.lEnt) + '</td>'
+      + gris(m.lRec) + gris(m.lDesc)
+      + '<td class="num">' + fmtInt(m.lPend) + '</td></tr>';
+  });
+  html += '<tr class="total-row"><td>TOTAL</td>'
+    + '<td class="num">' + fmtInt(T.dOrig) + '</td><td class="num">' + fmtInt(T.dEnt) + '</td>'
+    + '<td class="num">' + fmtInt(T.dRec) + '</td><td class="num">' + fmtInt(T.dDesc) + '</td>'
+    + '<td class="num">' + fmtInt(T.dPend) + '</td>'
+    + '<td class="num">' + fmtInt(T.lOrig) + '</td><td class="num">' + fmtInt(T.lEnt) + '</td>'
+    + '<td class="num">' + fmtInt(T.lRec) + '</td><td class="num">' + fmtInt(T.lDesc) + '</td>'
+    + '<td class="num">' + fmtInt(T.lPend) + '</td></tr>';
+  bodyEl.innerHTML = html;
 }
 
 function renderAllTablesFromCache(){
@@ -5431,7 +5612,10 @@ function renderReportePeriodico(){
   const metrics = buildCorteMetrics(filtered);
   // Cortes con cargue real: los demás quedan en cero (“—”) y no repiten cifras.
   const cortesActivos = cortesConCargue(filtered);
-  const activo = c => cortesActivos.has(c);
+  // Corte global elegido en los filtros: los cortes posteriores no se tienen en cuenta.
+  const corteGlobalRP = getCorteGlobal();
+  const fuera = c => c > corteGlobalRP;
+  const activo = c => cortesActivos.has(c) && !fuera(c);
   const DASH = '—';
   const cortesLabels={1:'Corte 1 (día 1-10)',2:'Corte 2 (día 11-20)',3:'Corte 3 (día 21-31)'};
   const labelEnt = periodicoTabActual==='documento' ? 'Entregadas' : periodicoTabActual==='linea' ? 'Entregadas' : 'Con soporte';
@@ -5462,15 +5646,15 @@ function renderReportePeriodico(){
 
   // ---- una sola tabla con los 3 cortes ----
   // Las columnas “totales” muestran el último estado con cargue real (no el corte 3 vacío).
-  const corteFinal = corteVigenteHasta(cortesActivos, 3);
+  const corteFinal = corteVigenteHasta(cortesActivos, corteGlobalRP);
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
   const filas=bodegas.map(bodega=>{
     const total=valT(corteFinal,bodega);
     const entFinal=valA(corteFinal,bodega), pendFinal=valB(corteFinal,bodega);
     const base={ent:valA(0,bodega), pend:valB(0,bodega)};
     const cortes=[1,2,3].map(c=>activo(c)
-      ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false}
-      : {ent:0, pend:0, sin:true});
+      ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false, fuera:false}
+      : {ent:0, pend:0, sin:!fuera(c), fuera:fuera(c)});
     const rec=[1,2,3].map(c=>{
       if(!activo(c)) return 0;
       if(periodicoTabActual==='soporte') return (findEntry(c,bodega)||{}).eventoRec||0;
@@ -5495,6 +5679,7 @@ function renderReportePeriodico(){
 
   const dim='style="color:#9CA9B6;"';
   const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
+  const tdFueraRP='<td style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">'+DASH+'</td>';
   let cuerpo=filas.map(f=>{
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
@@ -5502,6 +5687,7 @@ function renderReportePeriodico(){
       +'<td>'+fmtInt(f.pendFinal)+'</td>'
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
+      if(f.cortes[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
       if(f.cortes[i].sin){ tds+=tdSinCargue+tdSinCargue; return; }
       tds+='<td>'+fmtInt(f.cortes[i].ent)+'</td><td>'+fmtInt(f.cortes[i].pend)+'</td>';
     });
@@ -5512,15 +5698,19 @@ function renderReportePeriodico(){
     +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
   [0,1,2].forEach(i=>{
+    if(fuera(i+1)){ filaTotal+=tdFueraRP+tdFueraRP; return; }
     if(!activo(i+1)){ filaTotal+=tdSinCargue+tdSinCargue; return; }
     filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>';
   });
   filaTotal+='<td>'+fmtInt(tot.recTotal)+'</td></tr>';
 
+  const etiqCorte = (c, txt) => fuera(c)
+    ? '<th colspan="2" style="color:#C3CCD6;">'+txt+' <span style="font-weight:600;">· fuera del corte</span></th>'
+    : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
   let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th><th rowspan="2">'+labelEnt+' totales</th><th rowspan="2">'+labelPend+' totales</th><th rowspan="2">Índice de Pendientes</th>'
-    +'<th colspan="2">Corte 1 (1-10)'+(activo(1)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
-    +'<th colspan="2">Corte 2 (11-20)'+(activo(2)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
-    +'<th colspan="2">Corte 3 (21-31)'+(activo(3)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>'
+    +etiqCorte(1,'Corte 1 (1-10)')
+    +etiqCorte(2,'Corte 2 (11-20)')
+    +etiqCorte(3,'Corte 3 (21-31)')
     +'<th rowspan="2">'+labelRec+'</th></tr>';
   let ths2='<tr><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th><th>'+labelEnt+'</th><th>'+labelPend+'</th></tr>';
 
@@ -5528,6 +5718,19 @@ function renderReportePeriodico(){
   // Un corte sin cargue se muestra vacío: no hereda ni repite las cifras del corte anterior.
   let html='<div class="corte-grid">';
   [1,2,3].forEach(corte=>{
+    if(fuera(corte)){
+      html+='<div class="corte-card">'
+        +'<h4 style="color:#C3CCD6;">'+cortesLabels[corte]+'</h4>'
+        +'<svg width="150" height="150" viewBox="0 0 200 200" id="periodicoDonut'+corte+'"></svg>'
+        +'<div class="legend" style="margin:10px 0 8px;">'
+        +'<div class="item" style="color:#C3CCD6;">'+labelEnt+'<span class="val">'+DASH+'</span></div>'
+        +'<div class="item" style="color:#C3CCD6;">'+labelPend+'<span class="val">'+DASH+'</span></div>'
+        +'<div class="item" style="color:#C3CCD6;">'+labelRec+' en el corte<span class="val">'+DASH+'</span></div>'
+        +'</div>'
+        +'<p style="margin:0;font-size:11.5px;line-height:1.45;color:#C3CCD6;">Fuera del corte global seleccionado en los filtros (corte '+corteGlobalRP+'). Cambia el corte en los filtros para incluirlo.</p>'
+        +'</div>';
+      return;
+    }
     if(!activo(corte)){
       html+='<div class="corte-card">'
         +'<h4 style="color:#9CA9B6;">'+cortesLabels[corte]+'</h4>'
@@ -5564,7 +5767,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Las columnas de totales corresponden al último corte con cargue. '+explicaRec+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. '+explicaRec+'</p>'
     +'<div class="table-wrap" style="max-height:460px;">'
     +'<table class="data"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
@@ -5575,7 +5778,7 @@ function renderReportePeriodico(){
   // ---- pintar los 3 donuts (uno por corte) ----
   [1,2,3].forEach(corte=>{
     if(!activo(corte)){
-      drawDonut('periodicoDonut'+corte, [{label:'',value:1,color:'#E8EEF4'}], DASH, '#9CA9B6');
+      drawDonut('periodicoDonut'+corte, [{label:'',value:1,color:'#E8EEF4'}], DASH, fuera(corte)?'#C3CCD6':'#9CA9B6');
       return;
     }
     const a=accA[corte], b=accB[corte];
