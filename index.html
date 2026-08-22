@@ -413,8 +413,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
     <div class="grid-uploads" id="uploadGrid"></div>
     <div class="action-bar">
       <button class="btn btn-primary" id="btnCalcular" disabled>Calcular indicadores</button>
+      <button class="btn btn-export" id="btnBackup">Descargar copia de seguridad</button>
+      <button class="btn btn-ghost" id="btnBackupExcel">Descargar datos en Excel</button>
+      <button class="btn btn-ghost" id="btnRestaurar">Restaurar copia</button>
+      <input type="file" id="inputRestaurar" accept=".json,.medisfarma" style="display:none;">
       <button class="btn btn-ghost" id="btnLimpiarTodo">Borrar todos los datos guardados</button>
       <span class="action-note" id="calcNote">Carga las fuentes obligatorias para habilitar el cálculo.</span>
+      <span class="action-note">La copia de seguridad (.json) guarda TODO lo cargado y se puede volver a cargar con “Restaurar copia”.</span>
     </div>
   </div>
 
@@ -2720,8 +2725,186 @@ async function handleFileSelected(key,file){
     }await refreshStatusFromDB();
 }catch(err){ console.error(err); showToast('Error leyendo '+file.name+': '+err.message,true); }
 }
+/* =========================================================================
+   Copia de seguridad (respaldo) y restauracion de TODOS los datos cargados
+   ========================================================================= */
+const BACKUP_APP_ID = 'medisfarma-dashboard';
+const BACKUP_VERSION = 1;
+
+// Las fechas (objetos Date) se guardan marcadas para poder devolverlas
+// exactamente igual al restaurar la copia.
+function backupEncodeValue(v){
+  if(v instanceof Date) return isNaN(v) ? null : {__date: v.toISOString()};
+  return v;
+}
+function backupEncodeRows(rows){
+  return (rows||[]).map(r=>{
+    if(!r || typeof r!=='object') return r;
+    const o={};
+    Object.keys(r).forEach(k=>{ o[k]=backupEncodeValue(r[k]); });
+    return o;
+  });
+}
+function backupDecodeRows(rows){
+  return (rows||[]).map(r=>{
+    if(!r || typeof r!=='object') return r;
+    const o={};
+    Object.keys(r).forEach(k=>{
+      const v=r[k];
+      if(v && typeof v==='object' && typeof v.__date==='string'){
+        const d=new Date(v.__date); o[k]=isNaN(d)?null:d;
+      }else{ o[k]=v; }
+    });
+    return o;
+  });
+}
+function backupStamp(){
+  const d=new Date();
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes());
+}
+function descargarArchivo(nombre, blob){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=nombre;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+
+async function construirRespaldo(){
+  const all=await idbGetAll();
+  const datasets=all.filter(r=>r && r.key && r.rows).map(r=>({
+    key: r.key,
+    title: (DATASETS.find(d=>d.key===r.key)||{}).title || r.key,
+    fileName: r.fileName || '',
+    updatedAt: r.updatedAt || '',
+    batches: r.batches || null,
+    rowCount: r.rows.length,
+    rows: backupEncodeRows(r.rows)
+  }));
+  let driveFiles=null;
+  try{
+    driveFiles={
+      inventario: JSON.parse(localStorage.getItem('inventario_drive_files')||'null'),
+      reporte: JSON.parse(localStorage.getItem('reporte_drive_files')||'null')
+    };
+  }catch(e){ driveFiles=null; }
+  return {
+    app: BACKUP_APP_ID,
+    version: BACKUP_VERSION,
+    generadoEn: new Date().toISOString(),
+    totalFilas: datasets.reduce((a,b)=>a+b.rowCount,0),
+    driveFiles,
+    datasets
+  };
+}
+
+async function descargarRespaldoJSON(){
+  const btn=document.getElementById('btnBackup');
+  try{
+    if(btn){ btn.disabled=true; }
+    showToast('Preparando la copia de seguridad…');
+    const backup=await construirRespaldo();
+    if(!backup.datasets.length){ showToast('No hay datos cargados para respaldar.',true); return; }
+    const blob=new Blob([JSON.stringify(backup)],{type:'application/json'});
+    descargarArchivo('Respaldo_Medisfarma_'+backupStamp()+'.json', blob);
+    showToast('Copia de seguridad descargada: '+backup.datasets.length+' fuente(s) · '+fmtInt(backup.totalFilas)+' filas. Guárdala en un lugar seguro.');
+  }catch(err){
+    console.error(err);
+    showToast('No se pudo generar la copia de seguridad: '+err.message,true);
+  }finally{ if(btn){ btn.disabled=false; } }
+}
+
+function backupSheetName(key, usados){
+  let base=String(key).slice(0,28).replace(/[\[\]\*\/\\\?:]/g,'_');
+  let name=base, i=2;
+  while(usados.indexOf(name)>=0){ name=base.slice(0,26)+'_'+i; i++; }
+  usados.push(name);
+  return name;
+}
+async function descargarRespaldoExcel(){
+  const btn=document.getElementById('btnBackupExcel');
+  const MAX_FILAS=200000;
+  try{
+    if(btn){ btn.disabled=true; }
+    showToast('Armando el archivo de Excel con todos los datos…');
+    const all=await idbGetAll();
+    const conDatos=all.filter(r=>r && r.rows && r.rows.length);
+    if(!conDatos.length){ showToast('No hay datos cargados para exportar.',true); return; }
+    const wb=XLSX.utils.book_new();
+    const usados=[]; let recortadas=false;
+    const resumen=[['Fuente','Clave','Filas','Último archivo','Actualizado']];
+    conDatos.forEach(rec=>{
+      const def=DATASETS.find(d=>d.key===rec.key)||{};
+      resumen.push([def.title||rec.key, rec.key, rec.rows.length, rec.fileName||'', rec.updatedAt||'']);
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen');
+    conDatos.forEach(rec=>{
+      let filas=rec.rows;
+      if(filas.length>MAX_FILAS){ filas=filas.slice(0,MAX_FILAS); recortadas=true; }
+      const ws=XLSX.utils.json_to_sheet(filas);
+      XLSX.utils.book_append_sheet(wb, ws, backupSheetName(rec.key, usados));
+    });
+    XLSX.writeFile(wb, 'Datos_Medisfarma_'+backupStamp()+'.xlsx');
+    showToast('Excel descargado con '+conDatos.length+' hoja(s) de datos.'+(recortadas?' Algunas hojas se recortaron a '+fmtInt(MAX_FILAS)+' filas por límite de Excel; usa la copia .json para el respaldo completo.':''));
+  }catch(err){
+    console.error(err);
+    showToast('No se pudo generar el Excel: '+err.message,true);
+  }finally{ if(btn){ btn.disabled=false; } }
+}
+
+async function restaurarRespaldo(file){
+  if(!file) return;
+  try{
+    showToast('Leyendo la copia de seguridad…');
+    const texto=await file.text();
+    let backup;
+    try{ backup=JSON.parse(texto); }
+    catch(e){ showToast('El archivo no es una copia de seguridad válida (JSON dañado).',true); return; }
+    if(!backup || backup.app!==BACKUP_APP_ID || !Array.isArray(backup.datasets)){
+      showToast('Ese archivo no es una copia de seguridad de este tablero.',true); return;
+    }
+    const validos=backup.datasets.filter(d=>d && d.key && Array.isArray(d.rows) && DATASETS.some(x=>x.key===d.key));
+    if(!validos.length){ showToast('La copia no contiene fuentes reconocibles.',true); return; }
+    const detalle=validos.map(d=>'· '+((DATASETS.find(x=>x.key===d.key)||{}).title||d.key)+': '+fmtInt(d.rows.length)+' filas').join('\n');
+    const fecha=backup.generadoEn?new Date(backup.generadoEn).toLocaleString('es-CO'):'sin fecha';
+    if(!confirm('Restaurar la copia del '+fecha+'?\n\n'+detalle+'\n\nEsto REEMPLAZA los datos actuales de esas fuentes.')) return;
+    let ok=0;
+    for(let i=0;i<validos.length;i++){
+      const d=validos[i];
+      showToast('Restaurando '+((DATASETS.find(x=>x.key===d.key)||{}).title||d.key)+'… ('+(i+1)+'/'+validos.length+')');
+      await idbPut({key:d.key, rows:backupDecodeRows(d.rows), fileName:d.fileName||'', batches:d.batches||null, updatedAt:d.updatedAt||new Date().toISOString()});
+      ok++;
+    }
+    if(backup.driveFiles){
+      try{
+        if(backup.driveFiles.inventario) localStorage.setItem('inventario_drive_files', JSON.stringify(backup.driveFiles.inventario));
+        if(backup.driveFiles.reporte) localStorage.setItem('reporte_drive_files', JSON.stringify(backup.driveFiles.reporte));
+      }catch(e){ /* cuota: no es crítico */ }
+    }
+    state.processed=null;
+    await refreshStatusFromDB();
+    showEmptyResults();
+    showToast('Copia restaurada: '+ok+' fuente(s). Pulsa "Calcular indicadores" para ver los resultados.');
+  }catch(err){
+    console.error(err);
+    showToast('No se pudo restaurar la copia: '+err.message,true);
+  }
+}
+
+document.getElementById('btnBackup').addEventListener('click', descargarRespaldoJSON);
+document.getElementById('btnBackupExcel').addEventListener('click', descargarRespaldoExcel);
+document.getElementById('btnRestaurar').addEventListener('click', ()=>{
+  const inp=document.getElementById('inputRestaurar');
+  inp.value=''; inp.click();
+});
+document.getElementById('inputRestaurar').addEventListener('change', e=>{
+  const f=e.target.files[0];
+  if(f) restaurarRespaldo(f);
+});
+
 document.getElementById('btnLimpiarTodo').addEventListener('click', async ()=>{
-  if(!confirm('¿Borrar todos los datos cargados (nube y datos de Drive guardados en este navegador)?')) return;
+  if(!confirm('¿Borrar todos los datos cargados (nube y datos de Drive guardados en este navegador)?\n\nRecomendación: descarga primero la copia de seguridad, así podrás restaurarlos después.')) return;
   await idbClearAll(); state.processed=null;
   showToast('Se borraron todos los datos cargados.');
   refreshStatusFromDB(); showEmptyResults();
