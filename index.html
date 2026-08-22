@@ -166,6 +166,9 @@ nav.tabs button .count{
 .filters label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);font-weight:600;}
 .filters input,.filters select{font-family:var(--body);font-size:13px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:150px;}
 .filters .field.grow{flex:1;min-width:180px;}
+.filters .field.field-corte{background:#EAF4FD;border:1.5px solid var(--blue,#0B5FA5);border-radius:8px;padding:7px 10px 9px;}
+.filters .field.field-corte label{color:#0B5FA5;font-weight:800;}
+.filters .field.field-corte select{border-color:#0B5FA5;background:var(--white);font-weight:700;color:#0B5FA5;}
 
 /* selector con selección múltiple (checkboxes) */
 .ms{position:relative;min-width:200px;}
@@ -427,6 +430,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
   <div class="view" id="view-resultados">
 
     <div class="filters" id="filtersBar" style="display:none;">
+      <div class="field field-corte"><label>▶ Corte del periodo</label>
+        <select id="fCorte" title="Define el corte que se toma como estado vigente en los totales, el gráfico y el comparativo">
+          <option value="1">Corte 1 (días 1-10)</option>
+          <option value="2">Corte 2 (días 11-20)</option>
+          <option value="3" selected>Corte 3 (días 21-31)</option>
+        </select>
+      </div>
       <div class="field"><label>Fecha desde</label><input type="date" id="fFechaDesde"></div>
       <div class="field"><label>Fecha hasta</label><input type="date" id="fFechaHasta"></div>
       <div class="field"><label>Modalidad</label><select id="fContrato"><option value="">Todos</option></select></div>
@@ -444,13 +454,6 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <div class="ms-list" id="fCie10List"></div>
           </div>
         </div>
-      </div>
-      <div class="field"><label>Corte del periodo</label>
-        <select id="fCorte" title="Define el corte que se toma como estado vigente en los totales, el gráfico y el comparativo">
-          <option value="1">Corte 1 (días 1-10)</option>
-          <option value="2">Corte 2 (días 11-20)</option>
-          <option value="3" selected>Corte 3 (días 21-31)</option>
-        </select>
       </div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnAplicarFiltro" style="padding:8px 14px;">Aplicar filtro</button></div>
       <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" id="btnLimpiarFiltro" style="padding:8px 14px;">Limpiar</button></div>
@@ -501,7 +504,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           <div class="seg-no-datos" id="segNoDatos"><b>Aún no hay datos del Reporte de Dispensación.</b> Carga el archivo en la pestaña "Cargue de datos" y calcula los indicadores para habilitar este reporte.</div>
           <div id="segContent" style="display:none;">
             <div class="seguimiento-corte-sel">
-              <label>Corte a visualizar en gráfico:</label>
+              <label>Corte del periodo (filtro global):</label>
+              <select id="segCorteGlobal" title="Es el mismo filtro de corte de la barra superior: define hasta qué corte se considera la información en totales, gráfico y comparativo">
+                <option value="1">Corte 1 (días 1-10)</option>
+                <option value="2">Corte 2 (días 11-20)</option>
+                <option value="3">Corte 3 (días 21-31)</option>
+              </select>
+              <label style="margin-left:10px;">Corte a visualizar en gráfico:</label>
               <select id="segCorteSelect"></select>
               <span id="segCorteGlobalInfo" style="font-size:12px;color:var(--ink-soft);"></span>
             </div>
@@ -3201,8 +3210,17 @@ document.getElementById('fCorte').addEventListener('change', ()=>{
   const modal=document.getElementById('periodicModal');
   if(modal && modal.classList.contains('show')) renderReportePeriodico();
 });
+// Espejo del filtro de corte dentro de la vista Seguimiento por Bodega:
+// cambiarlo equivale a cambiar el filtro de la barra superior.
+(function(){
+  const mirror=document.getElementById('segCorteGlobal');
+  if(!mirror) return;
+  mirror.addEventListener('change', ()=>{
+    const el=document.getElementById('fCorte');
+    if(el){ el.value=mirror.value; el.dispatchEvent(new Event('change')); }
+  });
+})();
 // Se aplica automáticamente también al cambiar cualquiera de los campos (no solo con el botón),
-// para que volver a poner la fecha completa (o cualquier otro valor) siempre recalcule.
 ['fFechaDesde','fFechaHasta','fContrato','fEps','fEpsGrupo'].forEach(id=>{
   document.getElementById(id).addEventListener('change', aplicarFiltrosYRenderizar);
 });
@@ -3347,6 +3365,7 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const hayCargues = cortesActivos.size > 0;
   const DASH = '—';
   const tdVacio = '<td class="num" style="color:#9CA9B6;" title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">' + DASH + '</td>';
+  const tdSinCambio = '<td class="num" style="color:#9CA9B6;" title="Sin cambios frente al corte anterior: esta bodega no presentó movimientos nuevos en este corte">' + DASH + '</td>';
   const tdFuera = '<td class="num" style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">' + DASH + '</td>';
   // Collect unique bodegas from all cortes
   const bodegaSet = new Set();
@@ -3373,8 +3392,10 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
       + fmtInt(act)
       + (hayPrevSeg ? '<span style="color:#9CA9B6;font-weight:500;"> · ' + fmtInt(ant) + '</span>' : '')
       + '</td>';
+  const mirrorEl = document.getElementById('segCorteGlobal');
+  if(mirrorEl) mirrorEl.value = String(corteGlobalSeg);
   const infoEl = document.getElementById('segCorteGlobalInfo');
-  if(infoEl) infoEl.textContent = 'Los totales y el gráfico usan el corte global seleccionado en los filtros (corte '+corteGlobalSeg+').';
+  if(infoEl) infoEl.textContent = 'Las columnas por corte muestran “—” cuando la bodega no tuvo cambios frente al corte anterior.';
   const _idxPend = (b) => {
     const m = bodegaMetrics[b][corteFinalSeg] || {docsTotal:0, docsEnt:0, docsPend:0};
     const tot = m.docsTotal !== undefined ? m.docsTotal : (m.docsEnt + m.docsPend);
@@ -3471,12 +3492,19 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
     const ipTotal = c3.docsTotal !== undefined ? c3.docsTotal : (c3.docsEnt + c3.docsPend);
     const iPend = ipTotal ? c3.docsPend / ipTotal : null;
     bHtml += '<td class="' + effClass(iPend) + '">' + fmtPct(iPend) + '</td>';
+    let ref = null; // último corte con datos mostrados para esta bodega
     for(let c=1; c<=NUM_CORTES; c++){
       if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
       if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
       const cd = bodegaMetrics[b][c] || {docsEnt:0,docsPend:0};
-      bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
-      bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
+      // Solo se muestran cifras cuando la bodega cambió respecto al corte anterior vigente.
+      if(ref && ref.docsEnt === cd.docsEnt && ref.docsPend === cd.docsPend){
+        bHtml += tdSinCambio + tdSinCambio;
+      } else {
+        bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
+        bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
+      }
+      ref = cd;
     }
     bHtml += '</tr>';
   });
@@ -3490,12 +3518,18 @@ function renderSeguimientoBodega(rowsAll, bodegaSearch, zona){
   const t3DocsTotal = t3.docsTotal !== undefined ? t3.docsTotal : (t3.docsEnt + t3.docsPend);
   const t3IPend = t3DocsTotal ? t3.docsPend / t3DocsTotal : null;
   bHtml += '<td class="' + effClass(t3IPend) + '">' + fmtPct(t3IPend) + '</td>';
+  let refTot = null;
   for(let c=1; c<=NUM_CORTES; c++){
     if(c>corteGlobalSeg){ bHtml += tdFuera + tdFuera; continue; }
     if(!cortesActivos.has(c)){ bHtml += tdVacio + tdVacio; continue; }
     const cd = totRow[c] || {docsEnt:0,docsPend:0};
-    bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
-    bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
+    if(refTot && refTot.docsEnt === cd.docsEnt && refTot.docsPend === cd.docsPend){
+      bHtml += tdSinCambio + tdSinCambio;
+    } else {
+      bHtml += '<td class="num">' + fmtInt(cd.docsEnt) + '</td>';
+      bHtml += '<td class="num">' + fmtInt(cd.docsPend) + '</td>';
+    }
+    refTot = cd;
   }
   bHtml += '</tr>';
   document.getElementById('tblSeguimientoBody').innerHTML = bHtml;
@@ -5680,16 +5714,29 @@ function renderReportePeriodico(){
   const dim='style="color:#9CA9B6;"';
   const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
   const tdFueraRP='<td style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">'+DASH+'</td>';
+  const tdSinCambioRP='<td '+dim+' title="Sin cambios frente al corte anterior: esta bodega no presentó movimientos nuevos en este corte">'+DASH+'</td>';
+  // Solo se muestran cifras cuando el corte trae cambios reales frente al corte previo mostrado.
+  const marcaSinCambio = (arr) => {
+    let ref=null;
+    return arr.map(cc=>{
+      if(cc.fuera || cc.sin) return Object.assign({}, cc, {igual:false});
+      const igual = !!ref && ref.ent===cc.ent && ref.pend===cc.pend;
+      ref = cc;
+      return Object.assign({}, cc, {igual:igual});
+    });
+  };
   let cuerpo=filas.map(f=>{
+    const cortesMk = marcaSinCambio(f.cortes);
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
       +'<td>'+fmtInt(f.entFinal)+'</td>'
       +'<td>'+fmtInt(f.pendFinal)+'</td>'
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
-      if(f.cortes[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
-      if(f.cortes[i].sin){ tds+=tdSinCargue+tdSinCargue; return; }
-      tds+='<td>'+fmtInt(f.cortes[i].ent)+'</td><td>'+fmtInt(f.cortes[i].pend)+'</td>';
+      if(cortesMk[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
+      if(cortesMk[i].sin){ tds+=tdSinCargue+tdSinCargue; return; }
+      if(cortesMk[i].igual){ tds+=tdSinCambioRP+tdSinCambioRP; return; }
+      tds+='<td>'+fmtInt(cortesMk[i].ent)+'</td><td>'+fmtInt(cortesMk[i].pend)+'</td>';
     });
     tds+='<td>'+fmtInt(f.recTotal)+'</td>';
     return '<tr>'+tds+'</tr>';
@@ -5697,10 +5744,12 @@ function renderReportePeriodico(){
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
     +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
+  const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})));
   [0,1,2].forEach(i=>{
-    if(fuera(i+1)){ filaTotal+=tdFueraRP+tdFueraRP; return; }
-    if(!activo(i+1)){ filaTotal+=tdSinCargue+tdSinCargue; return; }
-    filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>';
+    if(totMk[i].fuera){ filaTotal+=tdFueraRP+tdFueraRP; return; }
+    if(totMk[i].sin){ filaTotal+=tdSinCargue+tdSinCargue; return; }
+    if(totMk[i].igual){ filaTotal+=tdSinCambioRP+tdSinCambioRP; return; }
+    filaTotal+='<td>'+fmtInt(totMk[i].ent)+'</td><td>'+fmtInt(totMk[i].pend)+'</td>';
   });
   filaTotal+='<td>'+fmtInt(tot.recTotal)+'</td></tr>';
 
@@ -5767,7 +5816,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. '+explicaRec+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+explicaRec+'</p>'
     +'<div class="table-wrap" style="max-height:460px;">'
     +'<table class="data"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
