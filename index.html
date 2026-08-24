@@ -6917,33 +6917,34 @@ function renderReportePeriodico(){
   // ---- una sola tabla con los 3 cortes ----
   // Las columnas “totales” muestran el último estado con cargue real (no el corte 3 vacío).
   const corteFinal = corteVigenteHasta(cortesActivos, corteGlobalRP);
-  /* Referencia "Anterior": no basta con tomar el corte con cargue inmediatamente
-     anterior, porque si ese cargue no trajo cambios las dos cifras salen iguales y
-     parece que nunca hubo movimiento. Se busca hacia atrás el último estado que SÍ
-     es distinto al actual (incluida la línea base), así el comparativo muestra la
-     variación real. Si ningún estado anterior difiere, no hubo variación en el mes. */
+  /* Referencia "Anterior": se calcula BODEGA POR BODEGA, no con un único corte para
+     toda la tabla. Antes se elegía un solo corte de referencia a partir de los totales:
+     si otra bodega se había movido en el último cargue, la referencia quedaba en ese
+     corte y las bodegas que se movieron antes aparecían como "sin cambio" al ver todas
+     las bodegas, aunque al filtrarlas sí mostraban variación. Ahora, para cada bodega se
+     retrocede hasta el último estado con cifras distintas a las actuales (incluida la
+     línea base), de modo que la variación real se ve siempre, con o sin filtro. */
   const estadosPrevios = [0].concat([1,2,3].filter(c=>c<corteFinal && activo(c)));
-  let cortePrevio = null, previoEsUltimo = true;
-  if(corteFinal>0){
+  const etqCorto = c => c===0 ? 'base' : 'C'+c;
+  const etqLargo = c => c===0 ? 'primer cargue (línea base)' : 'corte '+c;
+  const refPrevBodega = (bodega) => {
+    if(corteFinal===0 || !estadosPrevios.length) return null;
+    const aNow=valA(corteFinal,bodega), bNow=valB(corteFinal,bodega);
     for(let i=estadosPrevios.length-1; i>=0; i--){
       const c=estadosPrevios[i];
-      if(accA[c]!==accA[corteFinal] || accB[c]!==accB[corteFinal]){
-        cortePrevio=c; previoEsUltimo = (i===estadosPrevios.length-1); break;
-      }
+      if(valA(c,bodega)!==aNow || valB(c,bodega)!==bNow) return c;
     }
-    if(cortePrevio===null) cortePrevio = estadosPrevios[estadosPrevios.length-1];
-  }
-  const etqPrevio = cortePrevio===null ? '' : (cortePrevio===0 ? 'primer cargue (línea base)' : 'corte '+cortePrevio);
-  const notaPrevio = cortePrevio===null ? ''
-    : (previoEsUltimo
-        ? 'La columna <strong>Anterior</strong> corresponde al '+etqPrevio+'.'
-        : 'La columna <strong>Anterior</strong> corresponde al <strong>'+etqPrevio+'</strong>, que es el último estado con cifras distintas: los cargues intermedios no trajeron cambios, por eso se salta hasta ese punto para que sí se vea la variación real.');
+    return estadosPrevios[estadosPrevios.length-1];
+  };
+  const notaPrevio = (corteFinal===0 || !estadosPrevios.length) ? ''
+    : 'La columna <strong>Anterior</strong> se calcula por bodega: compara contra el último cargue en el que <strong>esa</strong> bodega tuvo cifras distintas (<strong>base</strong> = primer cargue, <strong>C1/C2/C3</strong> = corte), y esa referencia se indica en cada celda. Así la variación se ve igual con o sin filtro de bodega.';
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
   const filas=bodegas.map(bodega=>{
     const total=valT(corteFinal,bodega);
     const entFinal=valA(corteFinal,bodega), pendFinal=valB(corteFinal,bodega);
-    const entPrev=cortePrevio===null?null:valA(cortePrevio,bodega);
-    const pendPrev=cortePrevio===null?null:valB(cortePrevio,bodega);
+    const cPrevB=refPrevBodega(bodega);
+    const entPrev=cPrevB===null?null:valA(cPrevB,bodega);
+    const pendPrev=cPrevB===null?null:valB(cPrevB,bodega);
     const base={ent:valA(0,bodega), pend:valB(0,bodega)};
     const cortes=[1,2,3].map(c=>activo(c)
       ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false, fuera:false}
@@ -6955,7 +6956,7 @@ function renderReportePeriodico(){
       return Math.max(0, valB(prev,bodega)-valB(c,bodega));
     });
     const recTotal=rec.reduce((a,b)=>a+b,0);
-    return {bodega, total, entFinal, pendFinal, entPrev, pendPrev, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
+    return {bodega, total, entFinal, pendFinal, entPrev, pendPrev, refPrev:cPrevB, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
   }).filter(f=>f.total||f.entFinal||f.pendFinal)
     .sort((a,b)=>{
       const ia=a.indice===null?-1:a.indice, ib=b.indice===null?-1:b.indice;
@@ -6969,12 +6970,17 @@ function renderReportePeriodico(){
   filas.forEach(f=>{ totBaseEnt+=f.base.ent; totBasePend+=f.base.pend; });
   filas.forEach(f=>{
     tot.total+=f.total; tot.ent+=f.entFinal; tot.pend+=f.pendFinal; tot.recTotal+=f.recTotal;
-    tot.entPrev+=(f.entPrev||0); tot.pendPrev+=(f.pendPrev||0);
+    /* Para el TOTAL se suma el valor anterior de cada bodega segun su propia referencia.
+       Si una bodega no tiene referencia previa, aporta su valor actual para no inflar
+       artificialmente la diferencia del total. */
+    tot.entPrev+=(f.entPrev===null||f.entPrev===undefined?f.entFinal:f.entPrev);
+    tot.pendPrev+=(f.pendPrev===null||f.pendPrev===undefined?f.pendFinal:f.pendPrev);
     [0,1,2].forEach(i=>{ tot.c[i].ent+=f.cortes[i].ent; tot.c[i].pend+=f.cortes[i].pend; tot.rec[i]+=f.rec[i]; });
   });
-  /* Celda con el valor actual y, debajo en gris, el valor de referencia anterior más
-     la diferencia entre ambos, para que la variación quede explícita en la tabla. */
-  const celdaAntPrev = (actual, previo, mejorSiSube) => {
+  const hayPrev = filas.some(f=>f.refPrev!==null && f.refPrev!==undefined);
+  /* Celda con el valor actual y, debajo en gris, el valor de referencia anterior, de qué
+     cargue proviene esa referencia y la diferencia, para que la variación quede explícita. */
+  const celdaAntPrev = (actual, previo, mejorSiSube, refTxt, refLong) => {
     if(previo===null || previo===undefined) return '<td>'+fmtInt(actual)+'</td>';
     const d = (actual||0)-(previo||0);
     const bueno = mejorSiSube ? d>0 : d<0;
@@ -6982,8 +6988,9 @@ function renderReportePeriodico(){
     const delta = d===0
       ? '<span style="color:#9CA9B6;"> · sin cambio</span>'
       : '<span style="color:'+color+';"> · '+(d>0?'+':'')+fmtInt(d)+'</span>';
+    const ref = refTxt ? '<span style="color:#B3BFCB;"> ('+refTxt+')</span>' : '';
     return '<td>'+fmtInt(actual)
-      + '<span class="prev-val" title="Valor en el '+etqPrevio+' y diferencia frente al valor actual">Ant.: '+fmtInt(previo)+delta+'</span>'
+      + '<span class="prev-val" title="Valor de esta bodega en el '+(refLong||'estado anterior')+' y diferencia frente al valor actual">Ant.: '+fmtInt(previo)+ref+delta+'</span>'
       + '</td>';
   };
 
@@ -7008,8 +7015,8 @@ function renderReportePeriodico(){
     const cortesMk = filasMk[fi];
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
-      +celdaAntPrev(f.entFinal, f.entPrev, true)
-      +celdaAntPrev(f.pendFinal, f.pendPrev, false)
+      +celdaAntPrev(f.entFinal, f.entPrev, true, f.refPrev===null||f.refPrev===undefined?'':etqCorto(f.refPrev), f.refPrev===null||f.refPrev===undefined?'':etqLargo(f.refPrev))
+      +celdaAntPrev(f.pendFinal, f.pendPrev, false, f.refPrev===null||f.refPrev===undefined?'':etqCorto(f.refPrev), f.refPrev===null||f.refPrev===undefined?'':etqLargo(f.refPrev))
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
       if(cortesMk[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
@@ -7022,8 +7029,8 @@ function renderReportePeriodico(){
   }).join('');
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
     +'<td>'+fmtInt(tot.total)+'</td>'
-    +celdaAntPrev(tot.ent, cortePrevio===null?null:tot.entPrev, true)
-    +celdaAntPrev(tot.pend, cortePrevio===null?null:tot.pendPrev, false)
+    +celdaAntPrev(tot.ent, hayPrev?tot.entPrev:null, true, 'ref. por bodega', 'estado anterior de cada bodega')
+    +celdaAntPrev(tot.pend, hayPrev?tot.pendPrev:null, false, 'ref. por bodega', 'estado anterior de cada bodega')
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
   const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})), {ent:totBaseEnt, pend:totBasePend});
   [0,1,2].forEach(i=>{
