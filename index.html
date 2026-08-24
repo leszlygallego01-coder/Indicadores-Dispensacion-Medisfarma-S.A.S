@@ -487,6 +487,8 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <button data-sub="inactivas">Indicador por Dispensas Inactivas</button>
         <button data-sub="traslados">Indicador de Traslados Realizados</button>
         <button data-sub="facturas">Información por factura</button>
+        <button data-sub="invfisico">Comparativo Inventario Sistema vs. Físico</button>
+        <button data-sub="cohortes">Indicador e Informe de Cohortes</button>
       </div>
 
       <!-- ---- SUBVISTA: DISPENSA ---- -->
@@ -607,7 +609,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           </div>
         </div>
 
-        <div class="chart-row" style="grid-template-columns:1fr 1.4fr;">
+        <div class="chart-row" style="grid-template-columns:1fr 1.4fr 1fr;">
           <div class="chart-card">
             <h4>% Eficiencia vs % Pendiente de líneas</h4>
             <select id="pieLineasGeneralSelect"></select>
@@ -629,6 +631,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                 <div class="legend" id="pieNoParetoLegend"></div>
               </div>
             </div>
+          </div>
+          <div class="chart-card">
+            <h4>% Líneas PENDIENTE con molécula AGOTADA</h4>
+            <select id="pieAgotadoPendienteSelect"></select>
+            <svg id="pieAgotadoPendiente" width="200" height="200" viewBox="0 0 200 200"></svg>
+            <div class="legend" id="pieAgotadoPendienteLegend"></div>
           </div>
         </div>
 
@@ -853,6 +861,161 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
       </div>
 
+      <!-- ---- SUBVISTA: COMPARATIVO INVENTARIO SISTEMA VS. FÍSICO ---- -->
+      <div class="subview" id="sub-invfisico">
+        <div class="helpbox">Compara el <b>Inventario del Punto (sistema)</b> contra el <b>Inventario Físico (conteo)</b>. Los dos se leen de sus carpetas de <b>Google Drive</b>: el conteo físico se toma de la carpeta <b>Inventario Físico</b> (columnas <b>Codigo</b>, <b>Bodega Detalle</b> y <b>Unidades en fisico</b>). El cruce se hace por <b>Bodega Detalle + Código</b>. Para actualizar el conteo, ve a <b>Cargar archivos</b> y sincroniza la tarjeta “Inventario Físico (conteo)”.</div>
+        <div class="seguimiento-section">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>☁️ Origen del conteo físico</h3>
+              <p class="seg-desc">El inventario físico proviene únicamente de la carpeta de Google Drive <b>Inventario Físico</b>. Cada sincronización reemplaza por completo el conteo anterior.</p>
+            </div>
+            <button class="btn btn-ghost" id="btnIrCargarInvFisico" style="margin-left:auto;align-self:center;padding:8px 14px;">☁️ Sincronizar desde Drive</button>
+          </div>
+          <div class="helpbox" id="invFisicoDiag" style="display:none;"></div>
+        </div>
+
+        <div class="stat-row" id="statsInvFisico"></div>
+
+        <div class="chart-row" style="grid-template-columns:1fr 1fr;">
+          <div class="chart-card">
+            <h4>% Exactitud de inventario (códigos)</h4>
+            <select id="pieInvFisicoSelect"></select>
+            <svg id="pieInvFisico" width="200" height="200" viewBox="0 0 200 200"></svg>
+            <div class="legend" id="pieInvFisicoLegend"></div>
+          </div>
+          <div class="chart-card">
+            <h4>Tipo de diferencia (códigos)</h4>
+            <select id="pieInvFisicoDifSelect"></select>
+            <svg id="pieInvFisicoDif" width="200" height="200" viewBox="0 0 200 200"></svg>
+            <div class="legend" id="pieInvFisicoDifLegend"></div>
+          </div>
+        </div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>📊 Resumen por bodega</h3>
+              <p class="seg-desc">Por cada bodega se comparan los códigos del sistema contra el conteo físico. <b>Exactitud</b> = códigos con unidades iguales / códigos comparados. <b>Sobrante</b> = físico mayor que sistema, <b>Faltante</b> = físico menor que sistema.</p>
+            </div>
+            <button class="btn btn-export" id="btnExportInvFisico" style="margin-left:auto;align-self:center;">⬇ Exportar comparativo (Excel)</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data" id="tblInvFisicoBodega">
+              <thead>
+                <tr>
+                  <th>Bodega</th><th>Zona</th><th>Códigos sistema</th><th>Códigos físico</th><th>Comparados</th>
+                  <th>Iguales</th><th>Sobrantes</th><th>Faltantes</th><th>Solo en sistema</th><th>Solo en físico</th>
+                  <th>Und. sistema</th><th>Und. físico</th><th>Dif. unidades</th><th>% Exactitud</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🔎 Detalle de diferencias</h3>
+              <p class="seg-desc">Listado código por código. Se muestran primero las mayores diferencias en unidades.</p>
+            </div>
+            <div class="field" style="min-width:200px;">
+              <label>Tipo de diferencia</label>
+              <select id="fInvFisicoTipo">
+                <option value="DIF">Solo con diferencia</option>
+                <option value="TODOS">Todos los códigos</option>
+                <option value="SOBRANTE">Sobrantes</option>
+                <option value="FALTANTE">Faltantes</option>
+                <option value="SOLO_SISTEMA">Solo en sistema</option>
+                <option value="SOLO_FISICO">Solo en físico</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:520px;">
+            <table class="data" id="tblInvFisicoDetalle">
+              <thead>
+                <tr>
+                  <th>#</th><th>Bodega</th><th>Código</th><th>Descripción DCI</th><th>Und. sistema</th><th>Und. físico</th><th>Diferencia</th><th>Estado</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- SUBVISTA: INDICADOR E INFORME DE COHORTES ---- -->
+      <div class="subview" id="sub-cohortes">
+        <div class="helpbox">Clasifica las dispensas en <b>cohortes</b> a partir del diagnóstico (<b>DESCRIPCION CIE 10</b>) de cada línea: <b>Maternas</b>, <b>Nutrición</b>, <b>Cardiovascular / HTA</b>, <b>Trasplantados</b>, <b>Diabéticos</b> y <b>Antibióticos</b>. Se cuentan <b>solo dispensas con Estado Activo</b>. Una misma línea puede pertenecer a más de una cohorte si su diagnóstico lo indica.</div>
+        <div class="helpbox" id="cohortesDiag" style="display:none;"></div>
+        <div class="stat-row" id="statsCohortes"></div>
+
+        <div class="chart-row" style="grid-template-columns:1fr 1fr;">
+          <div class="chart-card">
+            <h4>Distribución de líneas por cohorte</h4>
+            <select id="pieCohortesSelect"></select>
+            <svg id="pieCohortes" width="200" height="200" viewBox="0 0 200 200"></svg>
+            <div class="legend" id="pieCohortesLegend"></div>
+          </div>
+          <div class="chart-card">
+            <h4>Entregadas vs pendientes en cohortes</h4>
+            <select id="pieCohortesPendSelect"></select>
+            <svg id="pieCohortesPend" width="200" height="200" viewBox="0 0 200 200"></svg>
+            <div class="legend" id="pieCohortesPendLegend"></div>
+          </div>
+        </div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🧬 Indicador por cohorte</h3>
+              <p class="seg-desc">Pacientes (documentos distintos), líneas, unidades y cumplimiento de cada cohorte dentro del filtro aplicado.</p>
+            </div>
+            <button class="btn btn-export" id="btnExportCohortes" style="margin-left:auto;align-self:center;">⬇ Exportar informe de cohortes (Excel)</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data" id="tblCohortes">
+              <thead>
+                <tr>
+                  <th>Cohorte</th><th>Pacientes</th><th>Líneas</th><th>Entregadas</th><th>Pendientes</th>
+                  <th>% Cumplimiento</th><th>Und. dispensadas</th><th>Códigos distintos</th><th>Bodegas</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="seguimiento-section">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;">
+            <div style="flex:1;min-width:220px;">
+              <h3>🏆 Top 10 códigos por cohorte y bodega</h3>
+              <p class="seg-desc">Los 10 códigos más dispensados (por unidades) en cada combinación de cohorte y bodega. Usa los filtros para enfocar una cohorte o una bodega puntual.</p>
+            </div>
+            <div class="field" style="min-width:200px;">
+              <label>Cohorte</label>
+              <select id="fCohorte"><option value="">Todas las cohortes</option></select>
+            </div>
+            <div class="field" style="min-width:200px;">
+              <label>Bodega</label>
+              <select id="fCohorteBodega"><option value="">Todas las bodegas</option></select>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:560px;">
+            <table class="data" id="tblCohortesTop">
+              <thead>
+                <tr>
+                  <th>Cohorte</th><th>Bodega</th><th>#</th><th>Código</th><th>Descripción DCI</th>
+                  <th>Unidades</th><th>Líneas</th><th>Pacientes</th><th>Pendientes</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1019,6 +1182,16 @@ const DATASETS = [
       cantidad: ['CANTIDAD','CANTIDADES','UNIDADES','CANT','CANT.'],
       puntoVenta: ['PUNTO DE VENTA','PUNTO VENTA','PUNTOVENTA','PUNTO','BODEGA','BODEGA DETALLE','SUCURSAL','PDV']
     }
+  },
+  {
+    key: 'invfisico', tabla: 'Tabla_10', title: 'Inventario Físico (conteo)', required: false,
+    desc: 'Conteo físico de inventario por bodega. Los datos provienen exclusivamente de la carpeta de Google Drive y se reemplazan por completo en cada sincronización. Se cruza con el Inventario del Punto por Bodega Detalle + Codigo.',
+    cols: ['Codigo','Bodega Detalle','Unidades en fisico'],
+    fields: {
+      codigoArticulo: ['CODIGO','CÓDIGO','CODIGO ARTICULO','CODIGO DE ARTICULO','COD ARTICULO','COD. ARTICULO'],
+      bodegaDetalle: ['BODEGA DETALLE','BODEGA','BODEGADETALLE','BODEGA DE DETALLE'],
+      unidades: ['UNIDADES EN FISICO','UNIDADES EN FÍSICO','UNIDADES FISICAS','UNIDADES FÍSICAS','UNIDADES FISICO','UNIDADES','CANTIDAD FISICA','CANTIDAD FÍSICA','CANTIDAD','CONTEO']
+    }
   }
 ];
 
@@ -1096,7 +1269,7 @@ function deserializeFromFirestore(doc){
    Se usa IndexedDB (no localStorage) porque el acumulado del Reporte puede
    superar facilmente la cuota de localStorage.
    ========================================================================= */
-const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo', 'traslados', 'facturas'];
+const DRIVE_ONLY_KEYS = ['inventario', 'reporte', 'homologo', 'traslados', 'facturas', 'invfisico'];
 function isDriveOnlyKey(k){ return DRIVE_ONLY_KEYS.indexOf(k) >= 0; }
 
 const LOCAL_DB_NAME = 'medisfarma_drive_local';
@@ -1242,6 +1415,9 @@ async function idbDelete(key) {
     } else if (key === 'facturas') {
       // Facturas NO usa localStorage: solo memoria + IndexedDB
       _driveFilesFacturas = [];
+    } else if (key === 'invfisico') {
+      // Inventario Fisico NO usa localStorage: solo memoria + IndexedDB
+      _driveFilesInvFisico = [];
     }
     delete state.loaded[key];
     return;
@@ -1273,6 +1449,7 @@ async function idbClearAll() {
   _driveFilesHomologo = [];
   _driveFilesTraslados = [];
   _driveFilesFacturas = [];
+  _driveFilesInvFisico = [];
   _localWriteActive = true;
   try {
     if(!isFirestoreReady()) throw new Error('Firestore not initialized');
@@ -1554,16 +1731,19 @@ const DRIVE_FOLDER_REPORTE = '1ziz50g2Qc6c59KcATGVbX-8VR4R_laru';       // Repor
 const DRIVE_FOLDER_HOMOLOGO = '11UzrdMdVlcwZFWusXg5fUastekt0eRPb';      // Tabla Homólogo
 const DRIVE_FOLDER_TRASLADOS = '1DJrU4m0vzZY2AHaXPBdIu80gDEgZtJzK';     // Traslados entre bodegas
 const DRIVE_FOLDER_FACTURAS = '1MOFehAcE_nKHGLc4QV4cAUUDGZIi99Ac';      // Facturas por punto de venta
+const DRIVE_FOLDER_INVFISICO = '1zhP9VeJPGbUaoV99XuHYSPExheIQj5y0';     // Inventario Físico (conteo)
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 let _driveSyncing = false;
 let _driveSyncingReporte = false;
 let _driveSyncingHomologo = false;
 let _driveSyncingTraslados = false;
 let _driveSyncingFacturas = false;
+let _driveSyncingInvFisico = false;
 let _driveFilesReporte = [];
 let _driveFilesHomologo = []; // solo en memoria: Homologo no usa localStorage
 let _driveFilesTraslados = []; // solo en memoria: Traslados no usa localStorage
 let _driveFilesFacturas = []; // solo en memoria: Facturas no usa localStorage
+let _driveFilesInvFisico = []; // solo en memoria: Inventario Fisico no usa localStorage
 let _driveFiles = []; // archivos listados del folder de Drive
 
 /* Fila de configuracion del acceso a Google (boton + ID actual acortado) */
@@ -1812,6 +1992,63 @@ function trasladosCardHTML(d, loaded) {
     html += '<div class="drive-file-list">';
     for (let i = 0; i < _driveFilesTraslados.length; i++) {
       const f = _driveFilesTraslados[i];
+      html += '<div class="drive-file-item">';
+      html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
+      if (f.modifiedTime) {
+        const dt = new Date(f.modifiedTime);
+        html += '<span class="fdate">' + dt.toLocaleDateString('es') + ' ' + dt.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  if (loaded && loaded.updatedAt) {
+    const sd = new Date(loaded.updatedAt);
+    html += '<div class="drive-last-sync">Última sincronización: <b>' + sd.toLocaleDateString('es') + ' ' + sd.toLocaleTimeString('es', {hour:'2-digit',minute:'2-digit'}) + '</b></div>';
+  }
+
+  return html;
+}
+
+/* ---------- Tarjeta "Inventario Físico": solo Google Drive (reemplaza, no acumula) ---------- */
+function invFisicoCardHTML(d, loaded) {
+  const syncing = _driveSyncingInvFisico;
+  let html = '';
+
+  html += '<h3>' + d.title + ' <span class="drive-badge">☁️ solo Google Drive</span></h3>';
+  html += '<p class="desc">' + d.desc + '</p>';
+  html += '<div class="cols">' + d.cols.join(' · ') + '</div>';
+
+  html += '<div class="drive-folder-info">📂 Carpeta Drive: <code>Inventario Físico</code><br>ID: <code>' + DRIVE_FOLDER_INVFISICO + '</code></div>';
+
+  html += '<button class="drive-sync-btn" id="btnDriveSyncInvFisico" onclick="syncInvFisicoFromDrive()"' + (syncing ? ' disabled' : '') + '>';
+  html += syncing ? '<span class="spinner-inline"></span> Sincronizando…' : '☁️ Sincronizar carpeta "Inventario Físico" (Drive)';
+  html += '</button>';
+
+  html += driveConfigRowHTML();
+
+  if (_driveErrorInvFisico) {
+    html += '<div class="drive-error">⚠️ ' + escapeHtmlTxt(_driveErrorInvFisico) + '</div>';
+  }
+
+  html += '<div class="status-row">';
+  if (loaded) {
+    html += '<span class="rows">✓ ' + fmtInt(loaded.rowCount) + ' filas</span>';
+    html += '<button class="clear" data-key="' + d.key + '">Quitar</button>';
+  } else {
+    html += '<span class="empty">Sin cargar</span><span></span>';
+  }
+  html += '</div>';
+
+  if (loaded && loaded.fileName) {
+    html += '<div class="filename">Archivo: ' + escapeHtmlTxt(loaded.fileName) + '</div>';
+  }
+
+  if (_driveFilesInvFisico.length > 0) {
+    html += '<div class="drive-file-list">';
+    for (let i = 0; i < _driveFilesInvFisico.length; i++) {
+      const f = _driveFilesInvFisico[i];
       html += '<div class="drive-file-item">';
       html += '<span class="fname">📄 ' + escapeHtmlTxt(f.name) + '</span>';
       if (f.modifiedTime) {
@@ -2396,6 +2633,55 @@ async function syncFacturasFromDrive() {
   }
 }
 
+/* ---------- Sincronización Drive de "Inventario Físico" (REEMPLAZA, no acumula) ----------
+   Lee el archivo más reciente de la carpeta de Drive del conteo físico y sustituye
+   por completo la tabla. Los datos quedan solo en el almacén local del navegador. */
+async function syncInvFisicoFromDrive() {
+  if (_driveSyncingInvFisico) return;
+  _driveSyncingInvFisico = true;
+  renderUploadCards();
+
+  const KEY = 'invfisico';
+  const def = DATASETS.find(d => d.key === KEY);
+
+  try {
+    clearDriveError('invfisico');
+    const accessToken = await authenticateDrive();
+
+    const files = await listDriveFiles(accessToken, DRIVE_FOLDER_INVFISICO);
+    if (!files || !files.length) throw new Error('NO_FILES');
+
+    _driveFilesInvFisico = files.map(f => ({ name: f.name, modifiedTime: f.modifiedTime }));
+
+    const newest = files.slice().sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+
+    showToast('Leyendo desde Drive: ' + newest.name + '…');
+    const buf = await downloadDriveFile(accessToken, newest.id, newest.mimeType);
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true, dense: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!aoa.length) throw new Error('El archivo está vacío.');
+
+    const rows = parseRowsFromAOA(aoa, def);
+    if (!rows.length) {
+      showToast('No se encontraron filas de datos en el archivo de Drive.', true);
+      return;
+    }
+
+    await idbPut({ key: KEY, rows, fileName: newest.name, batches: null, updatedAt: new Date().toISOString() });
+
+    showToast('"' + def.title + '" sincronizado desde Drive: ' + fmtInt(rows.length) + ' filas (tabla reemplazada).');
+
+    await refreshStatusFromDB();
+  } catch (err) {
+    console.error('Drive sync error (invfisico):', err);
+    showDriveError('invfisico', driveErrorMessage(err), err);
+  } finally {
+    _driveSyncingInvFisico = false;
+    renderUploadCards();
+  }
+}
+
 /* ---------- Capa de diagnostico para llamadas a Google Drive ----------
    Antes cualquier fallo se convertia en un mensaje generico de "sin permiso",
    lo que hacia imposible saber que estaba pasando realmente. Ahora se conserva
@@ -2551,6 +2837,7 @@ let _driveErrorReporte = '';
 let _driveErrorHomologo = '';
 let _driveErrorTraslados = '';
 let _driveErrorFacturas = '';
+let _driveErrorInvFisico = '';
 function escapeHtmlTxt(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -2565,6 +2852,7 @@ function showDriveError(which, message, err) {
   else if (which === 'homologo') _driveErrorHomologo = full;
   else if (which === 'traslados') _driveErrorTraslados = full;
   else if (which === 'facturas') _driveErrorFacturas = full;
+  else if (which === 'invfisico') _driveErrorInvFisico = full;
   else _driveErrorInventario = full;
   showToast(message, true);
 }
@@ -2573,6 +2861,7 @@ function clearDriveError(which) {
   else if (which === 'homologo') _driveErrorHomologo = '';
   else if (which === 'traslados') _driveErrorTraslados = '';
   else if (which === 'facturas') _driveErrorFacturas = '';
+  else if (which === 'invfisico') _driveErrorInvFisico = '';
   else _driveErrorInventario = '';
 }
 
@@ -2651,6 +2940,9 @@ function renderUploadCards(){
     } else if(d.key === 'facturas') {
       card.className = 'card drive-only optional' + (loaded ? ' loaded' : '');
       card.innerHTML = facturasCardHTML(d, loaded);
+    } else if(d.key === 'invfisico') {
+      card.className = 'card drive-only optional' + (loaded ? ' loaded' : '');
+      card.innerHTML = invFisicoCardHTML(d, loaded);
     } else {
       card.innerHTML = `<h3>${d.title}${d.accumulate ? ' <span class="acumulativo-tag">· acumulativo</span>' : ''}</h3>
       <p class="desc">${d.desc}</p>
@@ -3709,6 +4001,7 @@ function renderAllTablesFromCache(){
   renderComparativos(filteredRowsCache);
   renderSeguimientoBodega(filteredRowsCache, bodegaSearch, zona);
   renderIndicadorInactivas(rowsVigentes, bodegaSearch, zona);
+  if(typeof renderCohortes==='function') renderCohortes(rowsVigentes, bodegaSearch, zona);
 }
 
 /* =========================================================================
@@ -4987,6 +5280,26 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
       ];
     }}
   ]);
+
+  // ---- gráfico de pastel: % de líneas PENDIENTE cuyo estado es TECNOLOGIA EN SALUD AGOTADO ----
+  function aggregateAgotadoPend(tbl){
+    const s=(f)=>sumField(tbl,f);
+    return { bodega:'__ALL__', lineasPen:s('lineasPen'), totalAgotadas:s('totalAgotadas') };
+  }
+  setupGenericPieSelector('pieAgotadoPendienteSelect','pieAgotadoPendiente','pieAgotadoPendienteLegend', table, aggregateAgotadoPend, row=>{
+    const pen = row.lineasPen||0;
+    const agot = Math.min(pen, row.totalAgotadas||0);
+    return [
+      {label:'Pendientes AGOTADO', value: agot, color:'#C0392B'},
+      {label:'Pendientes otras causas', value: Math.max(0, pen-agot), color:'#0B5FA5'}
+    ];
+  }, {
+    mode:'count',
+    centerFn:(slices,total)=>{
+      const ag = slices.find(s=>s.label==='Pendientes AGOTADO');
+      return fmtPct(total ? (ag? ag.value:0)/total : null);
+    }
+  });
 }
 
 /* =========================================================================
@@ -5473,6 +5786,632 @@ document.getElementById('btnDescargarInactivasBodega').addEventListener('click',
 })();
 
 /* =========================================================================
+   13c. Comparativo Inventario Sistema vs. Físico
+   El inventario del sistema se lee de la tabla "Inventario del Punto".
+   El inventario físico se lee EXCLUSIVAMENTE de la carpeta de Google Drive
+   "Inventario Físico" (dataset invfisico): columnas Codigo, Bodega Detalle y
+   Unidades en fisico. El cruce es por Bodega Detalle + Código.
+   ========================================================================= */
+let _invFisicoRows=[];            // conteo físico traído de Drive
+let _invFisicoFileName='';
+let _invFisicoUpdatedAt='';
+let _invSistemaCache=null;        // inventario del sistema agregado por bodega+codigo
+let _invFisicoResumen=[];         // cache para exportar
+let _invFisicoDetalle=[];
+
+/* Lee el conteo físico sincronizado desde Drive (almacén local del navegador). */
+async function ensureInvFisicoData(){
+  const rec=await idbGet('invfisico');
+  const filas=(rec && rec.rows) ? rec.rows : [];
+  const rows=[];
+  filas.forEach(r=>{
+    const cod=normValue(r.codigoArticulo);
+    if(!cod) return;
+    const bodega=String(r.bodegaDetalle||'').trim() || 'SIN BODEGA';
+    rows.push({ codigo:cod, bodega, bodegaNorm:normValue(bodega),
+      unidades:toNumber(r.unidades), descripcion:'' });
+  });
+  _invFisicoRows=rows;
+  _invFisicoFileName=(rec && rec.fileName) || '';
+  _invFisicoUpdatedAt=(rec && rec.updatedAt) || '';
+  return rows;
+}
+
+async function ensureInvSistemaData(force){
+  if(_invSistemaCache && !force) return _invSistemaCache;
+  const recI=await idbGet('inventario');
+  const rowsI=(recI && recI.rows) ? recI.rows : [];
+  const recH=await idbGet('homologo');
+  const descMap=new Map();
+  ((recH && recH.rows)?recH.rows:[]).forEach(r=>{
+    const c=normValue(r.codigo);
+    if(c && !descMap.has(c)) descMap.set(c, String(r.descripcionDci||r.articulo||'').trim());
+  });
+  const recB=await idbGet('bodegas');
+  const zonaMap=new Map();
+  ((recB && recB.rows)?recB.rows:[]).forEach(r=>{
+    const b=normValue(r.bodega);
+    if(b && !zonaMap.has(b)) zonaMap.set(b, String(r.zona||'').trim() || 'N/D');
+  });
+  // Un mismo código puede venir varias veces (lotes / vencimientos): se suman las unidades.
+  const sistema=new Map();
+  rowsI.forEach(r=>{
+    const cod=normValue(r.codigoArticulo);
+    if(!cod) return;
+    const bodega=String(r.bodegaDetalle||'').trim();
+    const bn=normValue(bodega);
+    const k=bn+'|'+cod;
+    if(!sistema.has(k)) sistema.set(k, {bodega: bodega || 'SIN BODEGA', bodegaNorm:bn, codigo:cod, unidades:0});
+    sistema.get(k).unidades += toNumber(r.unidades);
+  });
+  _invSistemaCache={ sistema, descMap, zonaMap, filas:rowsI.length, fileName:(recI && recI.fileName) || '' };
+  return _invSistemaCache;
+}
+
+function invFisicoMensaje(html){
+  const el=document.getElementById('invFisicoDiag');
+  if(!el) return;
+  if(!html){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display=''; el.innerHTML=html;
+}
+function invFisicoVaciar(msg){
+  const tbB=document.querySelector('#tblInvFisicoBodega tbody');
+  const tbD=document.querySelector('#tblInvFisicoDetalle tbody');
+  const st=document.getElementById('statsInvFisico');
+  if(st) st.innerHTML='';
+  if(tbB) tbB.innerHTML='<tr><td colspan="14" class="txt" style="text-align:center;color:#9CA9B6;">'+escHtml(msg)+'</td></tr>';
+  if(tbD) tbD.innerHTML='<tr><td colspan="8" class="txt" style="text-align:center;color:#9CA9B6;">'+escHtml(msg)+'</td></tr>';
+  ['pieInvFisico','pieInvFisicoDif'].forEach(id=>{
+    const svg=document.getElementById(id);
+    if(svg) drawDonut(id, [{label:'',value:1,color:'#DCE4EC'}], '—');
+  });
+  ['pieInvFisicoLegend','pieInvFisicoDifLegend'].forEach(id=>{
+    const l=document.getElementById(id); if(l) l.innerHTML='';
+  });
+  _invFisicoResumen=[]; _invFisicoDetalle=[];
+}
+
+function construirComparativoInvFisico(){
+  const cache=_invSistemaCache;
+  const sistema=cache ? cache.sistema : new Map();
+  const descMap=cache ? cache.descMap : new Map();
+  const zonaMap=cache ? cache.zonaMap : new Map();
+  // El comparativo se limita a las bodegas que vienen en el conteo físico:
+  // así no aparecen como "faltantes" bodegas que simplemente no se contaron.
+  const bodegasFisico=new Map();   // bodegaNorm -> nombre visible
+  const fisico=new Map();          // bodegaNorm|codigo -> unidades
+  const descFisico=new Map();
+  _invFisicoRows.forEach(r=>{
+    if(!r.codigo) return;
+    if(!bodegasFisico.has(r.bodegaNorm)) bodegasFisico.set(r.bodegaNorm, r.bodega);
+    const k=r.bodegaNorm+'|'+r.codigo;
+    fisico.set(k, (fisico.get(k)||0) + r.unidades);
+    if(r.descripcion && !descFisico.has(r.codigo)) descFisico.set(r.codigo, r.descripcion);
+  });
+
+  const porBodega=new Map();
+  const detalle=[];
+  const getGrupo=(bn, nombre)=>{
+    if(!porBodega.has(bn)){
+      porBodega.set(bn, { bodega: nombre || bn || 'SIN BODEGA', bodegaNorm:bn, zona: zonaMap.get(bn) || 'N/D',
+        codSis:0, codFis:0, comparados:0, iguales:0, sobrantes:0, faltantes:0, soloSis:0, soloFis:0,
+        undSis:0, undFis:0 });
+    }
+    return porBodega.get(bn);
+  };
+  const desc=(cod)=> descMap.get(cod) || descFisico.get(cod) || '';
+
+  // 1) Todo lo que el sistema tiene en las bodegas contadas
+  const vistos=new Set();
+  sistema.forEach(v=>{
+    if(!bodegasFisico.has(v.bodegaNorm)) return;
+    const g=getGrupo(v.bodegaNorm, bodegasFisico.get(v.bodegaNorm) || v.bodega);
+    const k=v.bodegaNorm+'|'+v.codigo;
+    vistos.add(k);
+    const uSis=v.unidades;
+    const hayFis=fisico.has(k);
+    const uFis=hayFis ? fisico.get(k) : 0;
+    g.codSis++; g.undSis+=uSis;
+    if(hayFis){ g.codFis++; g.undFis+=uFis; }
+    let estado;
+    if(!hayFis){ estado='SOLO EN SISTEMA'; g.soloSis++; }
+    else {
+      g.comparados++;
+      if(uFis===uSis){ estado='IGUAL'; g.iguales++; }
+      else if(uFis>uSis){ estado='SOBRANTE'; g.sobrantes++; }
+      else { estado='FALTANTE'; g.faltantes++; }
+    }
+    detalle.push({ bodega:g.bodega, zona:g.zona, codigo:v.codigo, descripcion:desc(v.codigo),
+      undSis:uSis, undFis:uFis, dif:uFis-uSis, estado });
+  });
+  // 2) Códigos que solo aparecen en el conteo físico
+  fisico.forEach((uFis,k)=>{
+    if(vistos.has(k)) return;
+    const bn=k.slice(0, k.lastIndexOf('|'));
+    const cod=k.slice(k.lastIndexOf('|')+1);
+    const g=getGrupo(bn, bodegasFisico.get(bn));
+    g.codFis++; g.undFis+=uFis; g.soloFis++;
+    detalle.push({ bodega:g.bodega, zona:g.zona, codigo:cod, descripcion:desc(cod),
+      undSis:0, undFis:uFis, dif:uFis, estado:'SOLO EN FISICO' });
+  });
+
+  const resumen=[...porBodega.values()].map(g=>{
+    g.difUnd = g.undFis - g.undSis;
+    g.exactitud = g.comparados ? g.iguales/g.comparados : null;
+    return g;
+  }).sort((a,b)=>(a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es'));
+
+  detalle.sort((a,b)=> Math.abs(b.dif)-Math.abs(a.dif) || a.bodega.localeCompare(b.bodega,'es') || a.codigo.localeCompare(b.codigo,'es'));
+  return {resumen, detalle};
+}
+
+const INVFIS_MAX_FILAS=1000;
+function pintarDetalleInvFisico(){
+  const tb=document.querySelector('#tblInvFisicoDetalle tbody');
+  if(!tb) return;
+  const tipo=(document.getElementById('fInvFisicoTipo')||{}).value || 'DIF';
+  let filas=_invFisicoDetalle;
+  if(tipo==='DIF') filas=filas.filter(r=>r.dif!==0 || r.estado==='SOLO EN SISTEMA' || r.estado==='SOLO EN FISICO');
+  else if(tipo!=='TODOS') filas=filas.filter(r=>r.estado===tipo.replace('_',' ').replace('SOLO SISTEMA','SOLO EN SISTEMA').replace('SOLO FISICO','SOLO EN FISICO'));
+  if(!filas.length){
+    tb.innerHTML='<tr><td colspan="8" class="txt" style="text-align:center;color:#9CA9B6;">No hay códigos para el tipo de diferencia seleccionado.</td></tr>';
+    return;
+  }
+  const vista=filas.slice(0, INVFIS_MAX_FILAS);
+  const colorEstado=(e)=> e==='IGUAL' ? 'pct-good' : (e==='SOBRANTE' ? 'pct-mid' : 'pct-bad');
+  let h=vista.map((r,i)=>
+    '<tr><td>'+(i+1)+'</td>'+
+    '<td class="txt">'+escHtml(r.bodega)+'</td>'+
+    '<td class="txt">'+escHtml(r.codigo)+'</td>'+
+    '<td class="txt">'+escHtml(r.descripcion||'—')+'</td>'+
+    '<td>'+fmtInt(r.undSis)+'</td>'+
+    '<td>'+fmtInt(r.undFis)+'</td>'+
+    '<td class="'+(r.dif===0?'':(r.dif>0?'pct-mid':'pct-bad'))+'"><b>'+(r.dif>0?'+':'')+fmtInt(r.dif)+'</b></td>'+
+    '<td class="txt '+colorEstado(r.estado)+'">'+escHtml(r.estado)+'</td></tr>'
+  ).join('');
+  if(filas.length>vista.length){
+    h+='<tr class="total-row"><td colspan="8" class="txt">Se muestran las primeras '+fmtInt(vista.length)+' de '+fmtInt(filas.length)+' filas. Usa el botón de exportar para ver el listado completo.</td></tr>';
+  }
+  tb.innerHTML=h;
+}
+
+function renderComparativoInvFisico(){
+  const tbB=document.querySelector('#tblInvFisicoBodega tbody');
+  if(!tbB) return;
+  const haySistema = _invSistemaCache && _invSistemaCache.sistema.size>0;
+  if(!haySistema){
+    invFisicoMensaje('<b>Falta el inventario del sistema.</b> Ve a la pestaña de cargue y sincroniza la tarjeta <b>Inventario del Punto</b> desde Google Drive.');
+    invFisicoVaciar('Sin inventario del sistema cargado.');
+    return;
+  }
+  if(!_invFisicoRows.length){
+    invFisicoMensaje('<b>Falta el inventario físico.</b> Ve a la pestaña de cargue y sincroniza la tarjeta <b>Inventario Físico (conteo)</b> desde Google Drive (columnas <b>Codigo</b>, <b>Bodega Detalle</b> y <b>Unidades en fisico</b>). Inventario del sistema disponible: <b>'+fmtInt(_invSistemaCache.sistema.size)+'</b> combinaciones de bodega y código.');
+    invFisicoVaciar('Sin inventario físico sincronizado desde Google Drive.');
+    return;
+  }
+
+  const {resumen, detalle}=construirComparativoInvFisico();
+  _invFisicoResumen=resumen; _invFisicoDetalle=detalle;
+
+  const tot=(f)=>resumen.reduce((a,b)=>a+(b[f]||0),0);
+  const comparados=tot('comparados'), iguales=tot('iguales');
+  const exactitudGlobal = comparados ? iguales/comparados : null;
+  const bodegasSinCruce=resumen.filter(g=>g.codSis===0).length;
+
+  let sincro='';
+  if(_invFisicoUpdatedAt){
+    const d=new Date(_invFisicoUpdatedAt);
+    if(!isNaN(d)) sincro=' · sincronizado el <b>'+d.toLocaleDateString('es')+' '+d.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})+'</b>';
+  }
+  invFisicoMensaje('Conteo físico desde Drive: <b>'+escHtml(_invFisicoFileName||'(sin nombre)')+'</b> · '+fmtInt(_invFisicoRows.length)+' filas leídas · '+fmtInt(resumen.length)+' bodega(s) contada(s)'+sincro+'.'+
+    (bodegasSinCruce ? ' <b>Ojo:</b> '+fmtInt(bodegasSinCruce)+' bodega(s) del conteo físico no existen en el inventario del sistema (revisa que el nombre de la bodega sea igual).' : ''));
+
+  const st=document.getElementById('statsInvFisico');
+  if(st){
+    st.innerHTML =
+      '<div class="stat"><div class="label">Bodegas comparadas</div><div class="value">'+fmtInt(resumen.length)+'</div>'+
+      '<div class="sub">según el archivo físico</div></div>'+
+      '<div class="stat"><div class="label">Códigos comparados</div><div class="value">'+fmtInt(comparados)+'</div>'+
+      '<div class="sub">presentes en sistema y físico</div></div>'+
+      '<div class="stat"><div class="label">% Exactitud de inventario</div><div class="value '+effClass(exactitudGlobal)+'">'+fmtPct(exactitudGlobal)+'</div>'+
+      '<div class="sub">'+fmtInt(iguales)+' códigos sin diferencia</div></div>'+
+      '<div class="stat"><div class="label">Sobrantes / Faltantes</div><div class="value">'+fmtInt(tot('sobrantes'))+' / '+fmtInt(tot('faltantes'))+'</div>'+
+      '<div class="sub">códigos con diferencia</div></div>'+
+      '<div class="stat"><div class="label">Solo sistema / Solo físico</div><div class="value">'+fmtInt(tot('soloSis'))+' / '+fmtInt(tot('soloFis'))+'</div>'+
+      '<div class="sub">códigos que no cruzan</div></div>'+
+      '<div class="stat"><div class="label">Diferencia neta en unidades</div><div class="value">'+((tot('undFis')-tot('undSis'))>0?'+':'')+fmtInt(tot('undFis')-tot('undSis'))+'</div>'+
+      '<div class="sub">físico '+fmtInt(tot('undFis'))+' vs sistema '+fmtInt(tot('undSis'))+'</div></div>';
+  }
+
+  // ---- Tabla por bodega ----
+  let h=resumen.map(g=>
+    '<tr><td class="txt">'+escHtml(g.bodega)+'</td><td class="txt">'+escHtml(g.zona)+'</td>'+
+    '<td>'+fmtInt(g.codSis)+'</td><td>'+fmtInt(g.codFis)+'</td><td><b>'+fmtInt(g.comparados)+'</b></td>'+
+    '<td>'+fmtInt(g.iguales)+'</td><td>'+fmtInt(g.sobrantes)+'</td><td>'+fmtInt(g.faltantes)+'</td>'+
+    '<td>'+fmtInt(g.soloSis)+'</td><td>'+fmtInt(g.soloFis)+'</td>'+
+    '<td>'+fmtInt(g.undSis)+'</td><td>'+fmtInt(g.undFis)+'</td>'+
+    '<td class="'+(g.difUnd===0?'':(g.difUnd>0?'pct-mid':'pct-bad'))+'">'+(g.difUnd>0?'+':'')+fmtInt(g.difUnd)+'</td>'+
+    '<td class="'+effClass(g.exactitud)+'"><b>'+fmtPct(g.exactitud)+'</b></td></tr>'
+  ).join('');
+  h+='<tr class="total-row"><td class="txt">TOTAL ('+resumen.length+')</td><td>—</td>'+
+     '<td>'+fmtInt(tot('codSis'))+'</td><td>'+fmtInt(tot('codFis'))+'</td><td>'+fmtInt(comparados)+'</td>'+
+     '<td>'+fmtInt(iguales)+'</td><td>'+fmtInt(tot('sobrantes'))+'</td><td>'+fmtInt(tot('faltantes'))+'</td>'+
+     '<td>'+fmtInt(tot('soloSis'))+'</td><td>'+fmtInt(tot('soloFis'))+'</td>'+
+     '<td>'+fmtInt(tot('undSis'))+'</td><td>'+fmtInt(tot('undFis'))+'</td>'+
+     '<td>'+((tot('undFis')-tot('undSis'))>0?'+':'')+fmtInt(tot('undFis')-tot('undSis'))+'</td>'+
+     '<td>'+fmtPct(exactitudGlobal)+'</td></tr>';
+  tbB.innerHTML=h;
+
+  // ---- Donas ----
+  const aggInv=(tbl)=>{
+    const s=(f)=>tbl.reduce((a,b)=>a+(b[f]||0),0);
+    return { bodega:'__ALL__', comparados:s('comparados'), iguales:s('iguales'), sobrantes:s('sobrantes'),
+      faltantes:s('faltantes'), soloSis:s('soloSis'), soloFis:s('soloFis') };
+  };
+  setupGenericPieSelector('pieInvFisicoSelect','pieInvFisico','pieInvFisicoLegend', resumen, aggInv, row=>[
+    {label:'Códigos iguales', value: row.iguales||0, color:'#1E8F5E'},
+    {label:'Códigos con diferencia', value: Math.max(0,(row.comparados||0)-(row.iguales||0)), color:'#C0392B'}
+  ], { mode:'count', centerFn:(slices,total)=>{
+      const ig=slices.find(s=>s.label==='Códigos iguales');
+      return fmtPct(total ? (ig? ig.value:0)/total : null);
+  }});
+  setupGenericPieSelector('pieInvFisicoDifSelect','pieInvFisicoDif','pieInvFisicoDifLegend', resumen, aggInv, row=>[
+    {label:'Sobrantes', value: row.sobrantes||0, color:'#D98A2B'},
+    {label:'Faltantes', value: row.faltantes||0, color:'#C0392B'},
+    {label:'Solo en sistema', value: row.soloSis||0, color:'#0B5FA5'},
+    {label:'Solo en físico', value: row.soloFis||0, color:'#7C5CBF'}
+  ], { mode:'count' });
+
+  pintarDetalleInvFisico();
+}
+
+/* Recarga desde el almacén local (Drive) y repinta toda la subvista. */
+async function refrescarInvFisico(force){
+  try{
+    await ensureInvSistemaData(force);
+    await ensureInvFisicoData();
+    renderComparativoInvFisico();
+  }catch(err){
+    console.error('Inventario físico:', err);
+    invFisicoMensaje('<b>No se pudo preparar el comparativo:</b> '+escHtml(err.message||String(err)));
+  }
+}
+
+(function initInvFisico(){
+  const btnIr=document.getElementById('btnIrCargarInvFisico');
+  if(btnIr) btnIr.addEventListener('click', ()=>{
+    if(typeof switchTab==='function') switchTab('cargue');
+    const card=document.getElementById('btnDriveSyncInvFisico');
+    if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+  const selTipo=document.getElementById('fInvFisicoTipo');
+  if(selTipo) selTipo.addEventListener('change', pintarDetalleInvFisico);
+  const btnExp=document.getElementById('btnExportInvFisico');
+  if(btnExp) btnExp.addEventListener('click', ()=>{
+    if(!_invFisicoDetalle.length){ showToast('Primero sincroniza el inventario físico desde Google Drive.', true); return; }
+    const resumen=_invFisicoResumen.map(g=>({
+      'Bodega':g.bodega, 'Zona':g.zona, 'Codigos sistema':g.codSis, 'Codigos fisico':g.codFis,
+      'Comparados':g.comparados, 'Iguales':g.iguales, 'Sobrantes':g.sobrantes, 'Faltantes':g.faltantes,
+      'Solo en sistema':g.soloSis, 'Solo en fisico':g.soloFis,
+      'Unidades sistema':g.undSis, 'Unidades fisico':g.undFis, 'Diferencia unidades':g.difUnd,
+      '% Exactitud':g.exactitud===null?'':+(g.exactitud*100).toFixed(1)
+    }));
+    const detalle=_invFisicoDetalle.map(r=>({
+      'Bodega':r.bodega, 'Zona':r.zona, 'Codigo':r.codigo, 'Descripcion DCI':r.descripcion,
+      'Unidades sistema':r.undSis, 'Unidades fisico':r.undFis, 'Diferencia':r.dif, 'Estado':r.estado
+    }));
+    const fecha=new Date().toISOString().slice(0,10);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen.length?resumen:[{'Sin datos':''}]), 'RESUMEN POR BODEGA');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'DETALLE SISTEMA VS FISICO');
+    XLSX.writeFile(wb, 'Comparativo_Inventario_Sistema_vs_Fisico_'+fecha+'.xlsx');
+    showToast('Excel exportado: '+fmtInt(detalle.length)+' códigos comparados.');
+  });
+})();
+
+/* =========================================================================
+   13d. Indicador e informe de Cohortes
+   Cada línea se clasifica según el diagnóstico (DESCRIPCION CIE 10). Para la
+   cohorte de Antibióticos también se revisa la molecula dispensada, porque el
+   diagnóstico no siempre menciona la infección.
+   ========================================================================= */
+const COHORTES_DEF=[
+  { key:'MATERNAS', label:'Maternas', color:'#C2529B', dx:[
+    'EMBARAZO','GESTACION','GESTANTE','PRENATAL','PARTO','PUERPERIO','OBSTETRIC','PREECLAMPSIA','ECLAMPSIA',
+    'ABORTO','MATERNA','MATERNO','SUPERVISION DE EMBARAZO','ATENCION MATERNA','TRABAJO DE PARTO','PLACENTA',
+    'AMENAZA DE PARTO','MULTIGESTANTE','PRIMIGESTANTE','LACTANCIA','PUERPERAL'] },
+  { key:'NUTRICION', label:'Nutrición', color:'#1E8F5E', dx:[
+    'DESNUTRICION','MALNUTRICION','NUTRICION','NUTRICIONAL','OBESIDAD','SOBREPESO','BAJO PESO','PESO INSUFICIENTE',
+    'DEFICIENCIA DE VITAMINA','AVITAMINOSIS','CARENCIA','ANEMIA POR DEFICIENCIA','ANEMIA FERROPENICA',
+    'DEFICIENCIA DE HIERRO','RAQUITISMO','CAQUEXIA','PERDIDA DE PESO','TALLA BAJA','RETARDO DEL CRECIMIENTO',
+    'FALLA DE MEDRO','TRASTORNO DE LA ALIMENTACION'] },
+  { key:'CARDIOVASCULAR', label:'Cardiovascular / HTA', color:'#C0392B', dx:[
+    'HIPERTENSION','HIPERTENSIVA','HIPERTENSIVO','CARDIOPATIA','CARDIACA','CARDIACO','CORAZON','INFARTO',
+    'ANGINA','ARRITMIA','FIBRILACION','INSUFICIENCIA CARDIACA','ATEROSCLEROSIS','ARTERIOSCLEROSIS',
+    'DISLIPIDEMIA','HIPERLIPIDEMIA','HIPERCOLESTEROLEMIA','CEREBROVASCULAR','ISQUEMIC','VALVULA MITRAL',
+    'AORTIC','TROMBOSIS','ENFERMEDAD VASCULAR','VENA','MIOCARDIO','HIPERTENSION ARTERIAL','FALLA CARDIACA'] },
+  { key:'TRASPLANTADOS', label:'Trasplantados', color:'#7C5CBF', dx:[
+    'TRASPLANT','TRANSPLANT','INJERTO','RECHAZO DEL ORGANO','RECHAZO DE ORGANO','PORTADOR DE ORGANO',
+    'DONANTE','POSTRASPLANTE','POST TRASPLANTE','INMUNOSUPRESION'] },
+  { key:'DIABETICOS', label:'Diabéticos', color:'#0B5FA5', dx:[
+    'DIABETES','DIABETIC','MELLITUS','HIPERGLUCEMIA','INSULINODEPENDIENTE','NO INSULINODEPENDIENTE',
+    'INTOLERANCIA A LA GLUCOSA','PREDIABETES','GLUCEMIA ALTERADA'] },
+  { key:'ANTIBIOTICOS', label:'Antibióticos', color:'#D98A2B', dx:[
+    'INFECCION','INFECCIOSA','INFECCIOSO','SEPSIS','SEPTICEMIA','NEUMONIA','TUBERCULOSIS','BACTERI',
+    'ABSCESO','CELULITIS','AMIGDALITIS','FARINGITIS','FARINGOAMIGDALITIS','OTITIS','SINUSITIS','BRONQUITIS',
+    'CISTITIS','URINARIA','PIELONEFRITIS','GASTROENTERITIS','OSTEOMIELITIS','ENDOCARDITIS','MENINGITIS',
+    'ERISIPELA','IMPETIGO','APENDICITIS','COLANGITIS','VAGINOSIS','URETRITIS','SIFILIS','SALMONEL','ESTAFILOC',
+    'ESTREPTOC','HERIDA INFECTADA'],
+    med:['AMOXICILINA','AMPICILINA','PENICILINA','CEFALEXINA','CEFRADINA','CEFAZOLIN','CEFTRIAXONA','CEFTAZIDIMA',
+    'CEFEPIME','CEFUROXIMA','CIPROFLOXACIN','LEVOFLOXACIN','MOXIFLOXACIN','NORFLOXACIN','AZITROMICINA',
+    'CLARITROMICINA','ERITROMICINA','CLINDAMICINA','METRONIDAZOL','DOXICICLINA','TETRACICLINA','GENTAMICINA',
+    'AMIKACINA','VANCOMICINA','MEROPENEM','IMIPENEM','ERTAPENEM','PIPERACILINA','TAZOBACTAM','LINEZOLID',
+    'NITROFURANTOINA','TRIMETOPRIM','SULFAMETOXAZOL','OXACILINA','DICLOXACILINA','CLAVULANICO','FOSFOMICINA',
+    'RIFAMPICINA','ISONIAZIDA','ETAMBUTOL','PIRAZINAMIDA','COLISTINA','TIGECICLINA','CLORANFENICOL'] }
+];
+const COHORTE_LABEL=new Map(COHORTES_DEF.map(c=>[c.key,c.label]));
+let _cohortesResumen=[];
+let _cohortesTop=[];
+let _cohortesDetalle=[];
+let _cohortesBodegas=[];
+
+function clasificarCohortesLinea(r){
+  const dx=normValue(r.codigoCie10);
+  const med=normValue(r.descripcionDci)+' '+normValue(r.homologo);
+  const out=[];
+  for(let i=0;i<COHORTES_DEF.length;i++){
+    const c=COHORTES_DEF[i];
+    let hit = !!dx && c.dx.some(k=>dx.indexOf(k)>=0);
+    if(!hit && c.med) hit = c.med.some(k=>med.indexOf(k)>=0);
+    if(hit) out.push(c.key);
+  }
+  return out;
+}
+
+function renderCohortes(rowsAllRaw, bodegaSearch, zona){
+  const tb=document.querySelector('#tblCohortes tbody');
+  const tbTop=document.querySelector('#tblCohortesTop tbody');
+  if(!tb || !tbTop) return;
+  const statsEl=document.getElementById('statsCohortes');
+  const diagEl=document.getElementById('cohortesDiag');
+  const base=(rowsAllRaw && rowsAllRaw.length) ? rowsAllRaw : [];
+
+  if(!base.length){
+    if(statsEl) statsEl.innerHTML='';
+    if(diagEl){ diagEl.style.display=''; diagEl.innerHTML='<b>Sin datos.</b> Carga las tablas y pulsa <b>Calcular indicadores</b> para ver el informe de cohortes.'; }
+    tb.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
+    tbTop.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
+    _cohortesResumen=[]; _cohortesTop=[]; _cohortesDetalle=[];
+    ['pieCohortes','pieCohortesPend'].forEach(id=>drawDonut(id, [{label:'',value:1,color:'#DCE4EC'}], '—'));
+    ['pieCohortesLegend','pieCohortesPendLegend'].forEach(id=>{ const l=document.getElementById(id); if(l) l.innerHTML=''; });
+    return;
+  }
+
+  // Solo dispensas con Estado Activo, respetando los filtros de bodega y zona de la barra superior.
+  const rows=soloActivas(base).filter(r=>{
+    if(bodegaSearch && !normValue(r.bodegaDetalle).includes(bodegaSearch)) return false;
+    if(zona && r.zona!==zona) return false;
+    return true;
+  });
+
+  const resumen=new Map();
+  COHORTES_DEF.forEach(c=>resumen.set(c.key, { key:c.key, label:c.label, color:c.color,
+    pacientes:new Set(), lineas:0, ent:0, pen:0, unidades:0, codigos:new Set(), bodegas:new Set() }));
+  const porBodega=new Map();      // para las donas (un renglon por bodega)
+  const porCodigo=new Map();      // cohorte|bodega|codigo
+  let lineasClasificadas=0, sinDx=0;
+
+  rows.forEach(r=>{
+    if(!normValue(r.codigoCie10)) sinDx++;
+    const cohortes=clasificarCohortesLinea(r);
+    if(!cohortes.length) return;
+    lineasClasificadas++;
+    const bodega=r.bodegaDetalle||'SIN BODEGA';
+    if(!porBodega.has(bodega)){
+      const fila={ bodega, zona:r.zona||'N/D', lineas:0, ent:0, pen:0 };
+      COHORTES_DEF.forEach(c=>{ fila['c_'+c.key]=0; });
+      porBodega.set(bodega, fila);
+    }
+    const fb=porBodega.get(bodega);
+    const entregada = r.lineaPendiente==='NO';
+    fb.lineas++; if(entregada) fb.ent++; else fb.pen++;
+    cohortes.forEach(k=>{
+      fb['c_'+k]++;
+      const g=resumen.get(k);
+      if(r.documento) g.pacientes.add(r.documento);
+      g.lineas++; if(entregada) g.ent++; else g.pen++;
+      g.unidades += (r.unidades||0);
+      if(r.codigoArticulo) g.codigos.add(r.codigoArticulo);
+      g.bodegas.add(bodega);
+      const ck=k+'|'+bodega+'|'+(r.codigoArticulo||'SIN CODIGO');
+      if(!porCodigo.has(ck)) porCodigo.set(ck, { cohorte:k, bodega, zona:r.zona||'N/D',
+        codigo:r.codigoArticulo||'SIN CODIGO', descripcion:r.descripcionDci||'',
+        unidades:0, lineas:0, pendientes:0, pacientes:new Set() });
+      const gc=porCodigo.get(ck);
+      gc.unidades += (r.unidades||0);
+      gc.lineas++;
+      if(!entregada) gc.pendientes++;
+      if(r.documento) gc.pacientes.add(r.documento);
+      if(!gc.descripcion && r.descripcionDci) gc.descripcion=r.descripcionDci;
+    });
+  });
+
+  const tabla=[...resumen.values()].map(g=>({
+    key:g.key, label:g.label, color:g.color,
+    pacientes:g.pacientes.size, lineas:g.lineas, ent:g.ent, pen:g.pen,
+    cumpl: g.lineas ? g.ent/g.lineas : null,
+    unidades:g.unidades, codigos:g.codigos.size, bodegas:g.bodegas.size
+  }));
+  _cohortesResumen=tabla;
+
+  const tablaBodega=[...porBodega.values()].sort((a,b)=>(a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es'));
+
+  // ---- KPIs ----
+  const pacientesCoh=new Set();
+  rows.forEach(r=>{ if(r.documento && clasificarCohortesLinea(r).length) pacientesCoh.add(r.documento); });
+  const lineasCohTot=tablaBodega.reduce((a,b)=>a+b.lineas,0);
+  const penCohTot=tablaBodega.reduce((a,b)=>a+b.pen,0);
+  const entCohTot=lineasCohTot-penCohTot;
+  const mayor=tabla.slice().sort((a,b)=>b.lineas-a.lineas)[0];
+  if(statsEl){
+    statsEl.innerHTML =
+      '<div class="stat"><div class="label">Líneas en cohortes</div><div class="value">'+fmtInt(lineasCohTot)+'</div>'+
+      '<div class="sub">'+fmtPct(rows.length?lineasCohTot/rows.length:null)+' de '+fmtInt(rows.length)+' líneas activas</div></div>'+
+      '<div class="stat"><div class="label">Pacientes en cohortes</div><div class="value">'+fmtInt(pacientesCoh.size)+'</div>'+
+      '<div class="sub">documentos distintos</div></div>'+
+      '<div class="stat"><div class="label">% Cumplimiento en cohortes</div><div class="value '+effClass(lineasCohTot?entCohTot/lineasCohTot:null)+'">'+fmtPct(lineasCohTot?entCohTot/lineasCohTot:null)+'</div>'+
+      '<div class="sub">'+fmtInt(entCohTot)+' entregadas</div></div>'+
+      '<div class="stat"><div class="label">Líneas pendientes</div><div class="value">'+fmtInt(penCohTot)+'</div>'+
+      '<div class="sub">dentro de las cohortes</div></div>'+
+      '<div class="stat"><div class="label">Cohorte con más líneas</div><div class="value" style="font-size:18px;">'+escHtml(mayor && mayor.lineas ? mayor.label : '—')+'</div>'+
+      '<div class="sub">'+fmtInt(mayor?mayor.lineas:0)+' líneas</div></div>'+
+      '<div class="stat"><div class="label">Bodegas con cohortes</div><div class="value">'+fmtInt(tablaBodega.length)+'</div></div>';
+  }
+  if(diagEl){
+    if(!lineasClasificadas){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Ninguna línea pudo clasificarse en una cohorte.</b> Revisa que el Reporte de Dispensación traiga la columna <b>DESCRIPCION CIE 10</b> con el nombre del diagnóstico.';
+    } else if(sinDx>0){
+      diagEl.style.display='';
+      diagEl.innerHTML='<b>Nota:</b> '+fmtInt(sinDx)+' de '+fmtInt(rows.length)+' líneas activas no traen diagnóstico (DESCRIPCION CIE 10), por lo que solo pueden clasificarse por la molécula dispensada.';
+    } else { diagEl.style.display='none'; diagEl.innerHTML=''; }
+  }
+
+  // ---- Tabla de cohortes ----
+  const tablaOrden=tabla.slice().sort((a,b)=>b.lineas-a.lineas || a.label.localeCompare(b.label,'es'));
+  let h=tablaOrden.map(t=>
+    '<tr><td class="txt"><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+t.color+';margin-right:6px;"></span>'+escHtml(t.label)+'</td>'+
+    '<td>'+fmtInt(t.pacientes)+'</td><td><b>'+fmtInt(t.lineas)+'</b></td>'+
+    '<td>'+fmtInt(t.ent)+'</td><td>'+fmtInt(t.pen)+'</td>'+
+    '<td class="'+effClass(t.cumpl)+'"><b>'+fmtPct(t.cumpl)+'</b></td>'+
+    '<td>'+fmtInt(t.unidades)+'</td><td>'+fmtInt(t.codigos)+'</td><td>'+fmtInt(t.bodegas)+'</td></tr>'
+  ).join('');
+  h+='<tr class="total-row"><td class="txt">TOTAL EN COHORTES (sin duplicar líneas)</td>'+
+     '<td>'+fmtInt(pacientesCoh.size)+'</td><td>'+fmtInt(lineasCohTot)+'</td>'+
+     '<td>'+fmtInt(entCohTot)+'</td><td>'+fmtInt(penCohTot)+'</td>'+
+     '<td>'+fmtPct(lineasCohTot?entCohTot/lineasCohTot:null)+'</td>'+
+     '<td>—</td><td>—</td><td>'+fmtInt(tablaBodega.length)+'</td></tr>';
+  tb.innerHTML=h;
+
+  // ---- Donas ----
+  const aggCoh=(tbl)=>{
+    const fila={ bodega:'__ALL__', lineas:0, ent:0, pen:0 };
+    COHORTES_DEF.forEach(c=>{ fila['c_'+c.key]=tbl.reduce((a,b)=>a+(b['c_'+c.key]||0),0); });
+    fila.lineas=tbl.reduce((a,b)=>a+(b.lineas||0),0);
+    fila.ent=tbl.reduce((a,b)=>a+(b.ent||0),0);
+    fila.pen=tbl.reduce((a,b)=>a+(b.pen||0),0);
+    return fila;
+  };
+  if(tablaBodega.length){
+    setupGenericPieSelector('pieCohortesSelect','pieCohortes','pieCohortesLegend', tablaBodega, aggCoh,
+      row=>COHORTES_DEF.map(c=>({label:c.label, value: row['c_'+c.key]||0, color:c.color})).filter(s=>s.value>0),
+      { mode:'count' });
+    setupGenericPieSelector('pieCohortesPendSelect','pieCohortesPend','pieCohortesPendLegend', tablaBodega, aggCoh, row=>[
+      {label:'Entregadas', value: row.ent||0, color:'#1E8F5E'},
+      {label:'Pendientes', value: row.pen||0, color:'#D98A2B'}
+    ], { mode:'count', centerFn:(slices,total)=>{
+        const e=slices.find(s=>s.label==='Entregadas');
+        return fmtPct(total ? (e? e.value:0)/total : null);
+    }});
+  } else {
+    ['pieCohortes','pieCohortesPend'].forEach(id=>drawDonut(id, [{label:'',value:1,color:'#DCE4EC'}], '—'));
+    ['pieCohortesLegend','pieCohortesPendLegend'].forEach(id=>{ const l=document.getElementById(id); if(l) l.innerHTML=''; });
+  }
+
+  // ---- Top 10 por cohorte y bodega ----
+  const todos=[...porCodigo.values()].map(g=>({
+    cohorte:g.cohorte, cohorteLabel:COHORTE_LABEL.get(g.cohorte)||g.cohorte, bodega:g.bodega, zona:g.zona,
+    codigo:g.codigo, descripcion:g.descripcion, unidades:g.unidades, lineas:g.lineas,
+    pendientes:g.pendientes, pacientes:g.pacientes.size
+  }));
+  const grupos=new Map();
+  todos.forEach(r=>{
+    const k=r.cohorte+'|'+r.bodega;
+    if(!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(r);
+  });
+  const top=[];
+  grupos.forEach(arr=>{
+    arr.sort((a,b)=> b.unidades-a.unidades || b.lineas-a.lineas || a.codigo.localeCompare(b.codigo,'es'));
+    arr.slice(0,10).forEach((r,i)=>top.push(Object.assign({pos:i+1}, r)));
+  });
+  top.sort((a,b)=> a.cohorteLabel.localeCompare(b.cohorteLabel,'es') || a.bodega.localeCompare(b.bodega,'es') || a.pos-b.pos);
+  _cohortesTop=top;
+  _cohortesDetalle=todos.sort((a,b)=> a.cohorteLabel.localeCompare(b.cohorteLabel,'es') || a.bodega.localeCompare(b.bodega,'es') || b.unidades-a.unidades);
+
+  // Selectores propios de esta vista
+  const selC=document.getElementById('fCohorte');
+  if(selC && selC.options.length<=1){
+    selC.innerHTML='<option value="">Todas las cohortes</option>'+COHORTES_DEF.map(c=>'<option value="'+c.key+'">'+escHtml(c.label)+'</option>').join('');
+  }
+  const selB=document.getElementById('fCohorteBodega');
+  _cohortesBodegas=tablaBodega.map(t=>t.bodega);
+  if(selB){
+    const prev=selB.value||'';
+    selB.innerHTML='<option value="">Todas las bodegas</option>'+_cohortesBodegas.map(b=>'<option value="'+escHtml(b)+'">'+escHtml(b)+'</option>').join('');
+    selB.value=_cohortesBodegas.indexOf(prev)>=0 ? prev : '';
+  }
+  pintarTopCohortes();
+}
+
+const COHORTES_TOP_MAX=400;
+function pintarTopCohortes(){
+  const tb=document.querySelector('#tblCohortesTop tbody');
+  if(!tb) return;
+  const coh=(document.getElementById('fCohorte')||{}).value || '';
+  const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
+  let filas=_cohortesTop.filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod));
+  if(!filas.length){
+    tb.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas de cohortes para los filtros seleccionados.</td></tr>';
+    return;
+  }
+  const vista=filas.slice(0, COHORTES_TOP_MAX);
+  let h=vista.map(r=>
+    '<tr><td class="txt">'+escHtml(r.cohorteLabel)+'</td>'+
+    '<td class="txt">'+escHtml(r.bodega)+'</td>'+
+    '<td>'+r.pos+'</td>'+
+    '<td class="txt">'+escHtml(r.codigo)+'</td>'+
+    '<td class="txt">'+escHtml(r.descripcion||'—')+'</td>'+
+    '<td><b>'+fmtInt(r.unidades)+'</b></td>'+
+    '<td>'+fmtInt(r.lineas)+'</td>'+
+    '<td>'+fmtInt(r.pacientes)+'</td>'+
+    '<td class="'+(r.pendientes?'pct-bad':'')+'">'+fmtInt(r.pendientes)+'</td></tr>'
+  ).join('');
+  if(filas.length>vista.length){
+    h+='<tr class="total-row"><td colspan="9" class="txt">Se muestran las primeras '+fmtInt(vista.length)+' de '+fmtInt(filas.length)+' filas. Filtra por cohorte o bodega, o exporta el informe para verlo completo.</td></tr>';
+  }
+  tb.innerHTML=h;
+}
+
+(function initCohortes(){
+  ['fCohorte','fCohorteBodega'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('change', pintarTopCohortes);
+  });
+  const btn=document.getElementById('btnExportCohortes');
+  if(btn) btn.addEventListener('click', ()=>{
+    if(!_cohortesResumen.length || !_cohortesDetalle.length){ showToast('Primero calcula los indicadores.', true); return; }
+    const resumen=_cohortesResumen.map(t=>({
+      'Cohorte':t.label, 'Pacientes':t.pacientes, 'Lineas':t.lineas, 'Entregadas':t.ent, 'Pendientes':t.pen,
+      '% Cumplimiento':t.cumpl===null?'':+(t.cumpl*100).toFixed(1),
+      'Unidades dispensadas':t.unidades, 'Codigos distintos':t.codigos, 'Bodegas':t.bodegas
+    }));
+    const mapTop=r=>({
+      'Cohorte':r.cohorteLabel, 'Zona':r.zona, 'Bodega':r.bodega, 'Puesto':r.pos||'', 'Codigo':r.codigo,
+      'Descripcion DCI':r.descripcion, 'Unidades':r.unidades, 'Lineas':r.lineas,
+      'Pacientes':r.pacientes, 'Pendientes':r.pendientes
+    });
+    const fecha=new Date().toISOString().slice(0,10);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'RESUMEN COHORTES');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_cohortesTop.map(mapTop)), 'TOP 10 COHORTE Y BODEGA');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_cohortesDetalle.map(mapTop)), 'TODOS LOS CODIGOS');
+    XLSX.writeFile(wb, 'Informe_Cohortes_'+fecha+'.xlsx');
+    showToast('Excel exportado: '+fmtInt(_cohortesTop.length)+' filas en el Top 10 por cohorte y bodega.');
+  });
+})();
+
+/* =========================================================================
    14. Navegación
    ========================================================================= */
 function switchTab(tab){
@@ -5492,6 +6431,7 @@ document.querySelectorAll('.result-tabs button').forEach(b=>{
       if(typeof ensureFacturasData==='function') ensureFacturasData().then(()=>renderInfoPorFactura());
     }
     if(b.dataset.sub==='traslados' && typeof renderIndicadorTraslados==='function') renderIndicadorTraslados();
+    if(b.dataset.sub==='invfisico' && typeof refrescarInvFisico==='function') refrescarInvFisico(true);
   });
 });
 
