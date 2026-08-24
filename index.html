@@ -720,11 +720,49 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         </div>
 
         <div class="table-wrap">
-          <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las INACTIVO se excluyen. &nbsp;<b>Orden:</b> bodegas ordenadas por <b>Efic. final</b> de Eficiencia Pareto (cantidad), de mayor a menor porcentaje. La columna <b>Sin Homologar</b> cuenta las líneas pendientes cuyo código no tiene clasificación PARETO / NO PARETO en el catálogo Homólogo.</p>
+          <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las INACTIVO se excluyen. &nbsp;<b>Orden:</b> por defecto por <b>Efic. final</b> de Eficiencia Pareto (cantidad), de mayor a menor. <b>Puedes ordenar por cualquier columna</b>: haz clic en el encabezado que quieras (incluidas Zona y Bodega) o usa los filtros de abajo; un segundo clic invierte entre mayor→menor y menor→mayor. La columna <b>Sin Homologar</b> cuenta las líneas pendientes cuyo código no tiene clasificación PARETO / NO PARETO en el catálogo Homólogo.</p>
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+            <div class="field" style="max-width:300px;margin-bottom:0;">
+              <label>Ordenar por</label>
+              <select id="fLineaOrdenCol">
+                <option value="zona">Zona</option>
+                <option value="bodega">Bodega</option>
+                <option value="lineas">Líneas · Total</option>
+                <option value="lineasEnt">Líneas · Entregadas</option>
+                <option value="lineasPen">Líneas · Pendientes</option>
+                <option value="sinHomologar">Líneas · Sin Homologar</option>
+                <option value="molParetoPend">Pareto · Moléculas</option>
+                <option value="paretoAgotado">Pareto · Agotadas</option>
+                <option value="molNoParetoPend">No pareto · Moléculas</option>
+                <option value="noParetoAgotado">No pareto · Agotadas</option>
+                <option value="totalAgotadas">Cierre · Líneas agot.</option>
+                <option value="pctCierre">Cierre · % cierre</option>
+                <option value="cantPuntoPareto">Ef. Pareto · Cantidad en el punto</option>
+                <option value="efPuntoPareto">Ef. Pareto · En el punto %</option>
+                <option value="cantBodegaPareto">Ef. Pareto · Cantidad en bodega</option>
+                <option value="efBodegaPareto">Ef. Pareto · En bodega %</option>
+                <option value="efFinalPareto">Ef. Pareto · Efic. final</option>
+                <option value="pctComprasPareto">Ef. Pareto · % Compras</option>
+                <option value="cantPuntoNoPareto">Ef. No Pareto · Cantidad en el punto</option>
+                <option value="efPuntoNoPareto">Ef. No Pareto · En el punto %</option>
+                <option value="cantBodegaNoPareto">Ef. No Pareto · Cantidad en bodega</option>
+                <option value="efBodegaNoPareto">Ef. No Pareto · En bodega %</option>
+                <option value="efFinalNoPareto">Ef. No Pareto · Efic. final</option>
+                <option value="pctComprasNoPareto">Ef. No Pareto · % Compras</option>
+              </select>
+            </div>
+            <div class="field" style="max-width:210px;margin-bottom:0;">
+              <label>Dirección</label>
+              <select id="fLineaOrdenDir">
+                <option value="desc">De mayor a menor</option>
+                <option value="asc">De menor a mayor</option>
+              </select>
+            </div>
+          </div>
           <table class="data" id="tblLinea">
             <thead>
               <tr>
-                <th rowspan="2">Zona</th><th rowspan="2">Bodega</th>
+                <th rowspan="2" class="sortable" data-col="zona" title="Clic para ordenar por Zona">Zona<span class="sort-ind">⇅</span></th><th rowspan="2" class="sortable" data-col="bodega" title="Clic para ordenar por Bodega">Bodega<span class="sort-ind">⇅</span></th>
                 <th colspan="4">Líneas</th>
                 <th colspan="2" class="grp-pareto">Pareto</th>
                 <th colspan="2" class="grp-nopareto">No pareto</th>
@@ -733,13 +771,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                 <th colspan="6" class="grp-nopareto">Eficiencia No Pareto (cantidad)</th>
               </tr>
               <tr class="sub">
-                <th>Total</th><th>Entregadas</th><th>Pendientes</th>
-                <th>Sin Homologar</th>
-                <th>Moléculas</th><th>Agotadas</th>
-                <th>Moléculas</th><th>Agotadas</th>
-                <th>Líneas agot.</th><th>% cierre</th>
-                <th>Cantidad en el punto</th><th>En el punto %</th><th>Cantidad en bodega</th><th>En bodega %</th><th>Efic. final</th><th>% Compras</th>
-                <th>Cantidad en el punto</th><th>En el punto %</th><th>Cantidad en bodega</th><th>En bodega %</th><th>Efic. final</th><th>% Compras</th>
+                <th class="sortable" data-col="lineas" title="Clic para ordenar por Líneas · Total">Total<span class="sort-ind">⇅</span></th><th class="sortable" data-col="lineasEnt" title="Clic para ordenar por Líneas · Entregadas">Entregadas<span class="sort-ind">⇅</span></th><th class="sortable" data-col="lineasPen" title="Clic para ordenar por Líneas · Pendientes">Pendientes<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="sinHomologar" title="Clic para ordenar por Sin Homologar">Sin Homologar<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="molParetoPend" title="Clic para ordenar por Pareto · Moléculas">Moléculas<span class="sort-ind">⇅</span></th><th class="sortable" data-col="paretoAgotado" title="Clic para ordenar por Pareto · Agotadas">Agotadas<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="molNoParetoPend" title="Clic para ordenar por No pareto · Moléculas">Moléculas<span class="sort-ind">⇅</span></th><th class="sortable" data-col="noParetoAgotado" title="Clic para ordenar por No pareto · Agotadas">Agotadas<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="totalAgotadas" title="Clic para ordenar por Líneas agotadas">Líneas agot.<span class="sort-ind">⇅</span></th><th class="sortable" data-col="pctCierre" title="Clic para ordenar por % cierre">% cierre<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="cantPuntoPareto" title="Clic para ordenar por Cantidad en el punto (Pareto)">Cantidad en el punto<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efPuntoPareto" title="Clic para ordenar por En el punto % (Pareto)">En el punto %<span class="sort-ind">⇅</span></th><th class="sortable" data-col="cantBodegaPareto" title="Clic para ordenar por Cantidad en bodega (Pareto)">Cantidad en bodega<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efBodegaPareto" title="Clic para ordenar por En bodega % (Pareto)">En bodega %<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efFinalPareto" title="Clic para ordenar por Efic. final (Pareto)">Efic. final<span class="sort-ind">⇅</span></th><th class="sortable" data-col="pctComprasPareto" title="Clic para ordenar por % Compras (Pareto)">% Compras<span class="sort-ind">⇅</span></th>
+                <th class="sortable" data-col="cantPuntoNoPareto" title="Clic para ordenar por Cantidad en el punto (No Pareto)">Cantidad en el punto<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efPuntoNoPareto" title="Clic para ordenar por En el punto % (No Pareto)">En el punto %<span class="sort-ind">⇅</span></th><th class="sortable" data-col="cantBodegaNoPareto" title="Clic para ordenar por Cantidad en bodega (No Pareto)">Cantidad en bodega<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efBodegaNoPareto" title="Clic para ordenar por En bodega % (No Pareto)">En bodega %<span class="sort-ind">⇅</span></th><th class="sortable" data-col="efFinalNoPareto" title="Clic para ordenar por Efic. final (No Pareto)">Efic. final<span class="sort-ind">⇅</span></th><th class="sortable" data-col="pctComprasNoPareto" title="Clic para ordenar por % Compras (No Pareto)">% Compras<span class="sort-ind">⇅</span></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -5370,36 +5408,7 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
   });
   lastTables.linea=table;
 
-  const tbody=document.querySelector('#tblLinea tbody');
-  let bodyHtml = table.map(t=>`
-    <tr>
-      <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
-      <td>${fmtInt(t.lineas)}</td><td>${fmtInt(t.lineasEnt)}</td><td>${fmtInt(t.lineasPen)}</td>
-      <td>${fmtInt(t.sinHomologar)}</td>
-      <td>${fmtInt(t.molParetoPend)}</td><td>${fmtInt(t.paretoAgotado)}</td>
-      <td>${fmtInt(t.molNoParetoPend)}</td><td>${fmtInt(t.noParetoAgotado)}</td>
-      <td>${fmtInt(t.totalAgotadas)}</td><td class="${pctClass(1-(t.pctCierre||0))}">${fmtPct(t.pctCierre)}</td>
-      <td>${fmtInt(t.cantPuntoPareto)}</td><td class="${effClass(t.efPuntoPareto)}">${fmtPct(t.efPuntoPareto)}</td><td>${fmtInt(t.cantBodegaPareto)}</td><td class="${effClass(t.efBodegaPareto)}">${fmtPct(t.efBodegaPareto)}</td><td class="${effClass(t.efFinalPareto)}">${fmtPct(t.efFinalPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasPareto)}</td>
-      <td>${fmtInt(t.cantPuntoNoPareto)}</td><td class="${effClass(t.efPuntoNoPareto)}">${fmtPct(t.efPuntoNoPareto)}</td><td>${fmtInt(t.cantBodegaNoPareto)}</td><td class="${effClass(t.efBodegaNoPareto)}">${fmtPct(t.efBodegaNoPareto)}</td><td class="${effClass(t.efFinalNoPareto)}">${fmtPct(t.efFinalNoPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasNoPareto)}</td>
-    </tr>`).join('');
-  if(!table.length) bodyHtml='<tr><td colspan="24" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
-  else{
-    const s=(f)=>sumField(table,f);
-    const tLineas=s('lineas'), tEnt=s('lineasEnt'), tPen=s('lineasPen'), tSinHom=s('sinHomologar');
-    const tMolP=s('molParetoPend'), tParAg=s('paretoAgotado'), tMolNP=s('molNoParetoPend'), tNoParAg=s('noParetoAgotado');
-    const tAgot=s('totalAgotadas'), tCP=s('cantPuntoPareto'), tCBP=s('cantBodegaPareto'), tCNP=s('cantPuntoNoPareto'), tCBNP=s('cantBodegaNoPareto');
-    const tEfPP=tMolP?tCP/tMolP:null, tEfBP=tMolP?tCBP/tMolP:null, tEfFP=(tEfPP||0)+(tEfBP||0);
-    const tEfPNP=tMolNP?tCNP/tMolNP:null, tEfBNP=tMolNP?tCBNP/tMolNP:null, tEfFNP=(tEfPNP||0)+(tEfBNP||0);
-    const tComprasP = tMolP? Math.max(0,1-tEfFP): null, tComprasNP = tMolNP? Math.max(0,1-tEfFNP): null;
-    bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
-      <td>${fmtInt(tLineas)}</td><td>${fmtInt(tEnt)}</td><td>${fmtInt(tPen)}</td>
-      <td>${fmtInt(tSinHom)}</td>
-      <td>${fmtInt(tMolP)}</td><td>${fmtInt(tParAg)}</td><td>${fmtInt(tMolNP)}</td><td>${fmtInt(tNoParAg)}</td>
-      <td>${fmtInt(tAgot)}</td><td>${fmtPct(tPen?tAgot/tPen:null)}</td>
-      <td>${fmtInt(tCP)}</td><td class="${effClass(tEfPP)}">${fmtPct(tEfPP)}</td><td>${fmtInt(tCBP)}</td><td class="${effClass(tEfBP)}">${fmtPct(tEfBP)}</td><td class="${effClass(tEfFP)}">${fmtPct(tEfFP)}</td><td class="pct-bad">${fmtPct(tComprasP)}</td>
-      <td>${fmtInt(tCNP)}</td><td class="${effClass(tEfPNP)}">${fmtPct(tEfPNP)}</td><td>${fmtInt(tCBNP)}</td><td class="${effClass(tEfBNP)}">${fmtPct(tEfBNP)}</td><td class="${effClass(tEfFNP)}">${fmtPct(tEfFNP)}</td><td class="pct-bad">${fmtPct(tComprasNP)}</td></tr>`;
-  }
-  tbody.innerHTML=bodyHtml;
+  pintarTablaLinea();
 
   const totalPend=rowsAll.filter(r=>r.lineaPendiente==='SI').length;
   const totalAgot=rowsAll.filter(r=>r.lineaPendiente==='SI' && r.estado==='TECNOLOGIA EN SALUD AGOTADO').length;
@@ -5475,6 +5484,94 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
     }
   });
 }
+
+// Orden configurable de la tabla del indicador por línea.
+// Por defecto: Eficiencia final Pareto de mayor a menor (igual que antes).
+let lineaOrden={col:'efFinalPareto', dir:'desc'};
+
+function pintarTablaLinea(){
+  const tbody=document.querySelector('#tblLinea tbody');
+  if(!tbody) return;
+  const table=(lastTables.linea||[]).slice();
+  const col=lineaOrden.col, dir=(lineaOrden.dir==='asc')?1:-1;
+  const esTexto = (col==='zona' || col==='bodega');
+  table.sort((a,b)=>{
+    if(esTexto){
+      const c=String(a[col]||'').localeCompare(String(b[col]||''),'es')*dir;
+      if(c!==0) return c;
+      return String(a.zona+a.bodega).localeCompare(String(b.zona+b.bodega),'es');
+    }
+    const va=(a[col]==null)?-1:a[col], vb=(b[col]==null)?-1:b[col];
+    if(va===vb){
+      // Desempate estable: más moléculas Pareto pendientes primero y luego alfabético.
+      if((b.molParetoPend||0)!==(a.molParetoPend||0)) return (b.molParetoPend||0)-(a.molParetoPend||0);
+      return String(a.zona+a.bodega).localeCompare(String(b.zona+b.bodega),'es');
+    }
+    return (va-vb)*dir;
+  });
+  let bodyHtml = table.map(t=>`
+    <tr>
+      <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
+      <td>${fmtInt(t.lineas)}</td><td>${fmtInt(t.lineasEnt)}</td><td>${fmtInt(t.lineasPen)}</td>
+      <td>${fmtInt(t.sinHomologar)}</td>
+      <td>${fmtInt(t.molParetoPend)}</td><td>${fmtInt(t.paretoAgotado)}</td>
+      <td>${fmtInt(t.molNoParetoPend)}</td><td>${fmtInt(t.noParetoAgotado)}</td>
+      <td>${fmtInt(t.totalAgotadas)}</td><td class="${pctClass(1-(t.pctCierre||0))}">${fmtPct(t.pctCierre)}</td>
+      <td>${fmtInt(t.cantPuntoPareto)}</td><td class="${effClass(t.efPuntoPareto)}">${fmtPct(t.efPuntoPareto)}</td><td>${fmtInt(t.cantBodegaPareto)}</td><td class="${effClass(t.efBodegaPareto)}">${fmtPct(t.efBodegaPareto)}</td><td class="${effClass(t.efFinalPareto)}">${fmtPct(t.efFinalPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasPareto)}</td>
+      <td>${fmtInt(t.cantPuntoNoPareto)}</td><td class="${effClass(t.efPuntoNoPareto)}">${fmtPct(t.efPuntoNoPareto)}</td><td>${fmtInt(t.cantBodegaNoPareto)}</td><td class="${effClass(t.efBodegaNoPareto)}">${fmtPct(t.efBodegaNoPareto)}</td><td class="${effClass(t.efFinalNoPareto)}">${fmtPct(t.efFinalNoPareto)}</td><td class="pct-bad">${fmtPct(t.pctComprasNoPareto)}</td>
+    </tr>`).join('');
+  if(!table.length) bodyHtml='<tr><td colspan="24" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para el filtro seleccionado.</td></tr>';
+  else{
+    const s=(f)=>sumField(table,f);
+    const tLineas=s('lineas'), tEnt=s('lineasEnt'), tPen=s('lineasPen'), tSinHom=s('sinHomologar');
+    const tMolP=s('molParetoPend'), tParAg=s('paretoAgotado'), tMolNP=s('molNoParetoPend'), tNoParAg=s('noParetoAgotado');
+    const tAgot=s('totalAgotadas'), tCP=s('cantPuntoPareto'), tCBP=s('cantBodegaPareto'), tCNP=s('cantPuntoNoPareto'), tCBNP=s('cantBodegaNoPareto');
+    const tEfPP=tMolP?tCP/tMolP:null, tEfBP=tMolP?tCBP/tMolP:null, tEfFP=(tEfPP||0)+(tEfBP||0);
+    const tEfPNP=tMolNP?tCNP/tMolNP:null, tEfBNP=tMolNP?tCBNP/tMolNP:null, tEfFNP=(tEfPNP||0)+(tEfBNP||0);
+    const tComprasP = tMolP? Math.max(0,1-tEfFP): null, tComprasNP = tMolNP? Math.max(0,1-tEfFNP): null;
+    bodyHtml += `<tr class="total-row"><td class="txt">—</td><td class="txt">TOTAL (${table.length} bodegas)</td>
+      <td>${fmtInt(tLineas)}</td><td>${fmtInt(tEnt)}</td><td>${fmtInt(tPen)}</td>
+      <td>${fmtInt(tSinHom)}</td>
+      <td>${fmtInt(tMolP)}</td><td>${fmtInt(tParAg)}</td><td>${fmtInt(tMolNP)}</td><td>${fmtInt(tNoParAg)}</td>
+      <td>${fmtInt(tAgot)}</td><td>${fmtPct(tPen?tAgot/tPen:null)}</td>
+      <td>${fmtInt(tCP)}</td><td class="${effClass(tEfPP)}">${fmtPct(tEfPP)}</td><td>${fmtInt(tCBP)}</td><td class="${effClass(tEfBP)}">${fmtPct(tEfBP)}</td><td class="${effClass(tEfFP)}">${fmtPct(tEfFP)}</td><td class="pct-bad">${fmtPct(tComprasP)}</td>
+      <td>${fmtInt(tCNP)}</td><td class="${effClass(tEfPNP)}">${fmtPct(tEfPNP)}</td><td>${fmtInt(tCBNP)}</td><td class="${effClass(tEfBNP)}">${fmtPct(tEfBNP)}</td><td class="${effClass(tEfFNP)}">${fmtPct(tEfFNP)}</td><td class="pct-bad">${fmtPct(tComprasNP)}</td></tr>`;
+  }
+  tbody.innerHTML=bodyHtml;
+  actualizarControlesOrdenLinea();
+}
+
+function actualizarControlesOrdenLinea(){
+  document.querySelectorAll('#tblLinea thead th.sortable').forEach(th=>{
+    const ind=th.querySelector('.sort-ind');
+    const activo = th.dataset.col===lineaOrden.col;
+    th.classList.toggle('sort-active', activo);
+    if(ind) ind.textContent = activo ? (lineaOrden.dir==='asc'?'▲':'▼') : '⇅';
+  });
+  const selCol=document.getElementById('fLineaOrdenCol');
+  const selDir=document.getElementById('fLineaOrdenDir');
+  if(selCol) selCol.value=lineaOrden.col;
+  if(selDir) selDir.value=lineaOrden.dir;
+}
+
+function initOrdenLinea(){
+  const selCol=document.getElementById('fLineaOrdenCol');
+  const selDir=document.getElementById('fLineaOrdenDir');
+  if(selCol) selCol.addEventListener('change', ()=>{ lineaOrden.col=selCol.value; pintarTablaLinea(); });
+  if(selDir) selDir.addEventListener('change', ()=>{ lineaOrden.dir=selDir.value; pintarTablaLinea(); });
+  // Cualquier encabezado de las dos filas del thead puede usarse para ordenar.
+  document.querySelectorAll('#tblLinea thead th.sortable').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const c=th.dataset.col;
+      if(lineaOrden.col===c) lineaOrden.dir=(lineaOrden.dir==='asc')?'desc':'asc';
+      else { lineaOrden.col=c; lineaOrden.dir=(c==='zona'||c==='bodega')?'asc':'desc'; }
+      pintarTablaLinea();
+    });
+  });
+  actualizarControlesOrdenLinea();
+}
+
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initOrdenLinea); else initOrdenLinea();
 
 /* =========================================================================
    12. Indicador Soporte Evento — 3.1 - 3.7
@@ -7186,21 +7283,21 @@ function renderReportePeriodico(){
 
   const tot={total:0, ent:0, pend:0, entPrev:0, pendPrev:0, c:[{ent:0,pend:0},{ent:0,pend:0},{ent:0,pend:0}], rec:[0,0,0], recTotal:0};
   let totBaseEnt=0, totBasePend=0;
-  filas.forEach(f=>{ totBaseEnt+=f.base.ent; totBasePend+=f.base.pend; });
+  filas.forEach(f=>{ totBaseEnt+=f.base.ent; totBasePend+=f.base.pend; }); // base inicial (corte 0) de referencia
   filas.forEach(f=>{
     tot.total+=f.total; tot.ent+=f.entFinal; tot.pend+=f.pendFinal; tot.recTotal+=f.recTotal;
-    /* Para el TOTAL se suma el valor anterior de cada bodega segun su propia referencia.
-       Si una bodega no tiene referencia previa, aporta su valor actual para no inflar
-       artificialmente la diferencia del total. */
-    tot.entPrev+=(f.entPrev===null||f.entPrev===undefined?f.entFinal:f.entPrev);
-    tot.pendPrev+=(f.pendPrev===null||f.pendPrev===undefined?f.pendFinal:f.pendPrev);
+    /* Variación del TOTAL: solo aportan referencia anterior las bodegas que realmente
+       registraron entregas/soportes nuevos (columna de recuperadas mayor que cero).
+       Una bodega sin entregas reales aporta su valor actual como “anterior”, de modo que
+       la diferencia del TOTAL refleja únicamente lo efectivamente entregado y coincide
+       con el Excel de descarga (antes se sumaba la referencia de todas las bodegas y la
+       diferencia salía inflada). */
+    const aportaRef = f.recTotal>0 && f.refPrev!==null && f.refPrev!==undefined;
+    tot.entPrev+=(aportaRef && f.entPrev!==null && f.entPrev!==undefined) ? f.entPrev : f.entFinal;
+    tot.pendPrev+=(aportaRef && f.pendPrev!==null && f.pendPrev!==undefined) ? f.pendPrev : f.pendFinal;
     [0,1,2].forEach(i=>{ tot.rec[i]+=f.rec[i]; });
   });
-  /* La fila TOTAL de cada corte usa el acumulado GENERAL del corte (todas las bodegas),
-     no la suma de las celdas visibles: una bodega sin cargue en el corte se muestra en
-     “—”, pero su estado acumulado sigue contando en el total del tablero. */
-  [0,1,2].forEach(i=>{ tot.c[i].ent=accA[i+1]; tot.c[i].pend=accB[i+1]; });
-  const hayPrev = filas.some(f=>f.refPrev!==null && f.refPrev!==undefined);
+  const hayPrev = filas.some(f=>f.recTotal>0 && f.refPrev!==null && f.refPrev!==undefined);
   /* Celda con el valor actual y, debajo en gris, el valor de referencia anterior, de qué
      cargue proviene esa referencia y la diferencia, para que la variación quede explícita. */
   const celdaAntPrev = (actual, previo, mejorSiSube, refTxt, refLong) => {
@@ -7240,6 +7337,21 @@ function renderReportePeriodico(){
     });
   };
   const filasMk = filas.map(f=>marcaSinCambio(f.cortes, f.base));
+  /* La fila TOTAL de cada corte suma ÚNICAMENTE las celdas que sí quedan visibles en la
+     tabla, es decir las bodegas con entregas reales y con cambio en ese corte. Antes se
+     usaba el acumulado general del corte (todas las bodegas), por lo que el TOTAL mostraba
+     cifras muy superiores a lo realmente entregado en el periodo. */
+  [0,1,2].forEach(i=>{
+    let e=0, p=0;
+    filas.forEach((f,fi)=>{
+      const cc=filasMk[fi][i];
+      if(cc.fuera || cc.sin) return;   // corte fuera del filtro o bodega sin cargue
+      if(!f.rec[i]) return;            // la bodega no entregó nada en el corte
+      if(cc.igual) return;             // sin cambios frente al corte anterior
+      e+=cc.ent; p+=cc.pend;
+    });
+    tot.c[i].ent=e; tot.c[i].pend=p;
+  });
   // Un corte solo se rotula con cifras si al menos una bodega cambió en ese corte.
   const rpCambio = [0,1,2].map(i=>filasMk.some((mk,fi)=>!mk[i].fuera && !mk[i].sin && !mk[i].igual && !!filas[fi].rec[i]));
   let cuerpo=filas.map((f,fi)=>{
@@ -7264,13 +7376,15 @@ function renderReportePeriodico(){
     +celdaAntPrev(tot.ent, hayPrev?tot.entPrev:null, true, 'ref. por bodega', 'estado anterior de cada bodega')
     +celdaAntPrev(tot.pend, hayPrev?tot.pendPrev:null, false, 'ref. por bodega', 'estado anterior de cada bodega')
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
-  const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})), {ent:totBaseEnt, pend:totBasePend});
+  /* La fila TOTAL replica exactamente el criterio de las celdas visibles: solo muestra
+     cifras cuando hubo entregas reales y cambios en el corte; en caso contrario queda en
+     “—” igual que las bodegas. */
   [0,1,2].forEach(i=>{
-    if(totMk[i].fuera){ filaTotal+=tdFueraRP+tdFueraRP; return; }
-    if(totMk[i].sin){ filaTotal+=tdSinCargue+tdSinCargue; return; }
+    if(fuera(i+1)){ filaTotal+=tdFueraRP+tdFueraRP; return; }
+    if(!activo(i+1)){ filaTotal+=tdSinCargue+tdSinCargue; return; }
     if(!tot.rec[i]){ filaTotal+=tdSinEntregaTot+tdSinEntregaTot; return; }
-    if(totMk[i].igual){ filaTotal+=tdSinCambioRP+tdSinCambioRP; return; }
-    filaTotal+='<td>'+fmtInt(totMk[i].ent)+'</td><td>'+fmtInt(totMk[i].pend)+'</td>';
+    if(!rpCambio[i]){ filaTotal+=tdSinCambioRP+tdSinCambioRP; return; }
+    filaTotal+='<td>'+fmtInt(tot.c[i].ent)+'</td><td>'+fmtInt(tot.c[i].pend)+'</td>';
   });
   filaTotal+='<td>'+fmtInt(tot.recTotal)+'</td></tr>';
 
