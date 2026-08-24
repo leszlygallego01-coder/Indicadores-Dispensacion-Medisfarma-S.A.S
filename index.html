@@ -226,6 +226,7 @@ table.data thead th{position:sticky;top:0;background:var(--blue);color:#fff;text
 table.data thead tr.sub th{background:var(--blue-deep);top:32px;font-size:10.5px;color:#DCEAF6;}
 table.data tbody td{padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap;font-family:var(--mono);color:var(--ink);}
 table.data tbody td.txt{font-family:var(--body);}
+table.data tbody td.wrapcell{white-space:normal;min-width:230px;max-width:430px;line-height:1.35;}
 table.data tbody tr:hover{background:var(--blue-soft);}
 table.data tbody tr:nth-child(even){background:#F7FAFD;}
 table.data tbody tr:nth-child(even):hover{background:var(--blue-soft);}
@@ -979,7 +980,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <thead>
                 <tr>
                   <th>Cohorte</th><th>Pacientes</th><th>Líneas</th><th>Entregadas</th><th>Pendientes</th>
-                  <th>% Cumplimiento</th><th>Und. dispensadas</th><th>Códigos distintos</th><th>Bodegas</th>
+                  <th>% Cumplimiento</th><th>Und. dispensadas</th><th>Códigos distintos</th><th>Códigos sin homologar</th><th>Bodegas</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -990,8 +991,8 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <div class="seguimiento-section">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;">
             <div style="flex:1;min-width:220px;">
-              <h3>🏆 Top 10 códigos por cohorte y bodega</h3>
-              <p class="seg-desc">Los 10 códigos más dispensados (por unidades) en cada combinación de cohorte y bodega. Usa los filtros para enfocar una cohorte o una bodega puntual.</p>
+              <h3>🏆 Top 10 códigos por cohorte</h3>
+              <p class="seg-desc">Selecciona una <b>cohorte</b> para ver sus 10 códigos más dispensados (por unidades). Puedes además enfocar una bodega puntual. La descarga en Excel respeta los filtros aplicados.</p>
             </div>
             <div class="field" style="min-width:200px;">
               <label>Cohorte</label>
@@ -1001,13 +1002,14 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <label>Bodega</label>
               <select id="fCohorteBodega"><option value="">Todas las bodegas</option></select>
             </div>
+            <button class="btn btn-export" id="btnExportCohortesTop">⬇ Descargar códigos (Excel)</button>
           </div>
           <div class="table-wrap" style="max-height:560px;">
             <table class="data" id="tblCohortesTop">
               <thead>
                 <tr>
-                  <th>Cohorte</th><th>Bodega</th><th>#</th><th>Código</th><th>Descripción DCI</th>
-                  <th>Unidades</th><th>Líneas</th><th>Pacientes</th><th>Pendientes</th>
+                  <th>#</th><th>Código</th><th>Descripción DCI</th>
+                  <th>Líneas</th><th>Pacientes</th><th>Pendientes</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -3308,6 +3310,10 @@ async function calcularIndicadores(){
       const homologo=codigoToHomologo.get(codigoArticulo) || '';
       const moleculaPareto=codigoToParetoDirect.get(codigoArticulo) || 'N/D';
       const descripcionDci=codigoToDescripcionDci.get(codigoArticulo) || '';
+      // Descripción tal como viene en el Reporte de Dispensación: se usa como respaldo
+      // cuando el código no existe en la tabla Homólogo (código sin homologar).
+      const descripcionReporte=String(r.descripcion||'').trim();
+      const enHomologos=codigoToHomologo.has(codigoArticulo);
       const estado=agotadoMap.get(codigoArticulo) || 'DISPONIBLE';
       const unidades=toNumber(r.unidades);
       const cantidadAutorizada=toNumber(r.cantidadAutorizada);
@@ -3338,6 +3344,7 @@ async function calcularIndicadores(){
       const codigoCie10=String(r.codigoCie10||'').trim().toUpperCase();
       return {
         idx, documento, fecha, eps, epsGrupo, contrato, codigoArticulo, homologo, moleculaPareto, descripcionDci, estado,
+        descripcionReporte, enHomologos,
         estadoDispensa, usuarioCreacion, codigoCie10,
         unidades, cantidadAutorizada, diferencia, lineaPendiente, bodegaDetalle, bodegaNorm,
         zona: bodegaToZona.get(bodegaNorm) || 'N/D',
@@ -6179,8 +6186,8 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
   if(!base.length){
     if(statsEl) statsEl.innerHTML='';
     if(diagEl){ diagEl.style.display=''; diagEl.innerHTML='<b>Sin datos.</b> Carga las tablas y pulsa <b>Calcular indicadores</b> para ver el informe de cohortes.'; }
-    tb.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
-    tbTop.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
+    tb.innerHTML='<tr><td colspan="10" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
+    tbTop.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
     _cohortesResumen=[]; _cohortesTop=[]; _cohortesDetalle=[];
     ['pieCohortes','pieCohortesPend'].forEach(id=>drawDonut(id, [{label:'',value:1,color:'#DCE4EC'}], '—'));
     ['pieCohortesLegend','pieCohortesPendLegend'].forEach(id=>{ const l=document.getElementById(id); if(l) l.innerHTML=''; });
@@ -6196,10 +6203,15 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
 
   const resumen=new Map();
   COHORTES_DEF.forEach(c=>resumen.set(c.key, { key:c.key, label:c.label, color:c.color,
-    pacientes:new Set(), lineas:0, ent:0, pen:0, unidades:0, codigos:new Set(), bodegas:new Set() }));
+    pacientes:new Set(), lineas:0, ent:0, pen:0, unidades:0, codigos:new Set(), sinHomologar:new Set(), bodegas:new Set() }));
   const porBodega=new Map();      // para las donas (un renglon por bodega)
   const porCodigo=new Map();      // cohorte|bodega|codigo
   let lineasClasificadas=0, sinDx=0;
+
+  // Descripción a usar: la del catálogo de Homólogos y, si el código no está homologado,
+  // la descripción que trae el propio Reporte de Dispensación.
+  const descLinea=(r)=>String(r.descripcionDci||'').trim() || String(r.descripcionReporte||r.descripcion||'').trim();
+  const sinHomologarLinea=(r)=>!(r.enHomologos===true || String(r.homologo||'').trim()!=='');
 
   rows.forEach(r=>{
     if(!normValue(r.codigoCie10)) sinDx++;
@@ -6222,17 +6234,19 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
       g.lineas++; if(entregada) g.ent++; else g.pen++;
       g.unidades += (r.unidades||0);
       if(r.codigoArticulo) g.codigos.add(r.codigoArticulo);
+      if(r.codigoArticulo && sinHomologarLinea(r)) g.sinHomologar.add(r.codigoArticulo);
       g.bodegas.add(bodega);
       const ck=k+'|'+bodega+'|'+(r.codigoArticulo||'SIN CODIGO');
       if(!porCodigo.has(ck)) porCodigo.set(ck, { cohorte:k, bodega, zona:r.zona||'N/D',
-        codigo:r.codigoArticulo||'SIN CODIGO', descripcion:r.descripcionDci||'',
+        codigo:r.codigoArticulo||'SIN CODIGO', descripcion:descLinea(r),
+        homologado:!sinHomologarLinea(r),
         unidades:0, lineas:0, pendientes:0, pacientes:new Set() });
       const gc=porCodigo.get(ck);
       gc.unidades += (r.unidades||0);
       gc.lineas++;
       if(!entregada) gc.pendientes++;
       if(r.documento) gc.pacientes.add(r.documento);
-      if(!gc.descripcion && r.descripcionDci) gc.descripcion=r.descripcionDci;
+      if(!gc.descripcion) gc.descripcion=descLinea(r);
     });
   });
 
@@ -6240,7 +6254,7 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
     key:g.key, label:g.label, color:g.color,
     pacientes:g.pacientes.size, lineas:g.lineas, ent:g.ent, pen:g.pen,
     cumpl: g.lineas ? g.ent/g.lineas : null,
-    unidades:g.unidades, codigos:g.codigos.size, bodegas:g.bodegas.size
+    unidades:g.unidades, codigos:g.codigos.size, sinHomologar:g.sinHomologar.size, bodegas:g.bodegas.size
   }));
   _cohortesResumen=tabla;
 
@@ -6284,13 +6298,15 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
     '<td>'+fmtInt(t.pacientes)+'</td><td><b>'+fmtInt(t.lineas)+'</b></td>'+
     '<td>'+fmtInt(t.ent)+'</td><td>'+fmtInt(t.pen)+'</td>'+
     '<td class="'+effClass(t.cumpl)+'"><b>'+fmtPct(t.cumpl)+'</b></td>'+
-    '<td>'+fmtInt(t.unidades)+'</td><td>'+fmtInt(t.codigos)+'</td><td>'+fmtInt(t.bodegas)+'</td></tr>'
+    '<td>'+fmtInt(t.unidades)+'</td><td>'+fmtInt(t.codigos)+'</td>'+
+    '<td class="'+(t.sinHomologar?'pct-bad':'')+'">'+fmtInt(t.sinHomologar)+'</td>'+
+    '<td>'+fmtInt(t.bodegas)+'</td></tr>'
   ).join('');
   h+='<tr class="total-row"><td class="txt">TOTAL EN COHORTES (sin duplicar líneas)</td>'+
      '<td>'+fmtInt(pacientesCoh.size)+'</td><td>'+fmtInt(lineasCohTot)+'</td>'+
      '<td>'+fmtInt(entCohTot)+'</td><td>'+fmtInt(penCohTot)+'</td>'+
      '<td>'+fmtPct(lineasCohTot?entCohTot/lineasCohTot:null)+'</td>'+
-     '<td>—</td><td>—</td><td>'+fmtInt(tablaBodega.length)+'</td></tr>';
+     '<td>—</td><td>—</td><td>—</td><td>'+fmtInt(tablaBodega.length)+'</td></tr>';
   tb.innerHTML=h;
 
   // ---- Donas ----
@@ -6321,8 +6337,8 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
   // ---- Top 10 por cohorte y bodega ----
   const todos=[...porCodigo.values()].map(g=>({
     cohorte:g.cohorte, cohorteLabel:COHORTE_LABEL.get(g.cohorte)||g.cohorte, bodega:g.bodega, zona:g.zona,
-    codigo:g.codigo, descripcion:g.descripcion, unidades:g.unidades, lineas:g.lineas,
-    pendientes:g.pendientes, pacientes:g.pacientes.size
+    codigo:g.codigo, descripcion:g.descripcion, homologado:g.homologado!==false, unidades:g.unidades, lineas:g.lineas,
+    pendientes:g.pendientes, pacientes:g.pacientes.size, pacientesSet:g.pacientes
   }));
   const grupos=new Map();
   todos.forEach(r=>{
@@ -6354,33 +6370,50 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
   pintarTopCohortes();
 }
 
-const COHORTES_TOP_MAX=400;
+const COHORTES_TOP_MAX=10;
 function pintarTopCohortes(){
   const tb=document.querySelector('#tblCohortesTop tbody');
   if(!tb) return;
   const coh=(document.getElementById('fCohorte')||{}).value || '';
   const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
-  let filas=_cohortesTop.filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod));
-  if(!filas.length){
-    tb.innerHTML='<tr><td colspan="9" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas de cohortes para los filtros seleccionados.</td></tr>';
+  if(!_cohortesDetalle.length){
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
     return;
   }
-  const vista=filas.slice(0, COHORTES_TOP_MAX);
-  let h=vista.map(r=>
-    '<tr><td class="txt">'+escHtml(r.cohorteLabel)+'</td>'+
-    '<td class="txt">'+escHtml(r.bodega)+'</td>'+
-    '<td>'+r.pos+'</td>'+
+  if(!coh){
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">Selecciona una <b>cohorte</b> en el filtro para ver su Top 10 de códigos.</td></tr>';
+    return;
+  }
+  const filas=cohortesTopFiltrado(coh, bod);
+  if(!filas.length){
+    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas de cohortes para los filtros seleccionados.</td></tr>';
+    return;
+  }
+  tb.innerHTML=filas.slice(0, COHORTES_TOP_MAX).map((r,i)=>
+    '<tr><td>'+(i+1)+'</td>'+
     '<td class="txt">'+escHtml(r.codigo)+'</td>'+
-    '<td class="txt">'+escHtml(r.descripcion||'—')+'</td>'+
-    '<td><b>'+fmtInt(r.unidades)+'</b></td>'+
+    '<td class="txt wrapcell">'+escHtml(r.descripcion||'—')+(r.homologado?'':' <span style="color:#B4451F;font-size:11px;">(sin homologar)</span>')+'</td>'+
     '<td>'+fmtInt(r.lineas)+'</td>'+
     '<td>'+fmtInt(r.pacientes)+'</td>'+
     '<td class="'+(r.pendientes?'pct-bad':'')+'">'+fmtInt(r.pendientes)+'</td></tr>'
   ).join('');
-  if(filas.length>vista.length){
-    h+='<tr class="total-row"><td colspan="9" class="txt">Se muestran las primeras '+fmtInt(vista.length)+' de '+fmtInt(filas.length)+' filas. Filtra por cohorte o bodega, o exporta el informe para verlo completo.</td></tr>';
-  }
-  tb.innerHTML=h;
+}
+
+// Agrupa el detalle por código según los filtros de cohorte y bodega, ordenado por unidades.
+function cohortesTopFiltrado(coh, bod){
+  const acum=new Map();
+  _cohortesDetalle.forEach(r=>{
+    if(coh && r.cohorte!==coh) return;
+    if(bod && r.bodega!==bod) return;
+    if(!acum.has(r.codigo)) acum.set(r.codigo, { codigo:r.codigo, descripcion:r.descripcion,
+      homologado:r.homologado, unidades:0, lineas:0, pendientes:0, pacientes:new Set() });
+    const g=acum.get(r.codigo);
+    if(!g.descripcion && r.descripcion) g.descripcion=r.descripcion;
+    g.unidades+=r.unidades; g.lineas+=r.lineas; g.pendientes+=r.pendientes;
+    if(r.pacientesSet) r.pacientesSet.forEach(d=>g.pacientes.add(d));
+  });
+  return [...acum.values()].map(g=>Object.assign({}, g, {pacientes:g.pacientes.size}))
+    .sort((a,b)=> b.unidades-a.unidades || b.lineas-a.lineas || a.codigo.localeCompare(b.codigo,'es'));
 }
 
 (function initCohortes(){
@@ -6394,11 +6427,13 @@ function pintarTopCohortes(){
     const resumen=_cohortesResumen.map(t=>({
       'Cohorte':t.label, 'Pacientes':t.pacientes, 'Lineas':t.lineas, 'Entregadas':t.ent, 'Pendientes':t.pen,
       '% Cumplimiento':t.cumpl===null?'':+(t.cumpl*100).toFixed(1),
-      'Unidades dispensadas':t.unidades, 'Codigos distintos':t.codigos, 'Bodegas':t.bodegas
+      'Unidades dispensadas':t.unidades, 'Codigos distintos':t.codigos,
+      'Codigos sin homologar':t.sinHomologar, 'Bodegas':t.bodegas
     }));
     const mapTop=r=>({
       'Cohorte':r.cohorteLabel, 'Zona':r.zona, 'Bodega':r.bodega, 'Puesto':r.pos||'', 'Codigo':r.codigo,
-      'Descripcion DCI':r.descripcion, 'Unidades':r.unidades, 'Lineas':r.lineas,
+      'Descripcion DCI':r.descripcion, 'Homologado':r.homologado===false?'NO':'SI',
+      'Unidades':r.unidades, 'Lineas':r.lineas,
       'Pacientes':r.pacientes, 'Pendientes':r.pendientes
     });
     const fecha=new Date().toISOString().slice(0,10);
@@ -6408,6 +6443,24 @@ function pintarTopCohortes(){
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_cohortesDetalle.map(mapTop)), 'TODOS LOS CODIGOS');
     XLSX.writeFile(wb, 'Informe_Cohortes_'+fecha+'.xlsx');
     showToast('Excel exportado: '+fmtInt(_cohortesTop.length)+' filas en el Top 10 por cohorte y bodega.');
+  });
+
+  // Descarga de la zona del Top: Cohorte, Bodega, Codigo, Descripcion DCI y Unidades,
+  // respetando los filtros de cohorte y bodega seleccionados en pantalla.
+  const btnTop=document.getElementById('btnExportCohortesTop');
+  if(btnTop) btnTop.addEventListener('click', ()=>{
+    if(!_cohortesDetalle.length){ showToast('Primero calcula los indicadores.', true); return; }
+    const coh=(document.getElementById('fCohorte')||{}).value || '';
+    const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
+    const filas=_cohortesDetalle
+      .filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
+      .map(r=>({ 'Cohorte':r.cohorteLabel, 'Bodega':r.bodega, 'Codigo':r.codigo,
+        'Descripcion DCI':r.descripcion||'', 'Unidades':r.unidades }));
+    if(!filas.length){ showToast('No hay filas para los filtros seleccionados.', true); return; }
+    const wb2=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(filas), 'CODIGOS COHORTE');
+    XLSX.writeFile(wb2, 'Codigos_Cohortes_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    showToast('Excel descargado: '+fmtInt(filas.length)+' filas.');
   });
 })();
 
