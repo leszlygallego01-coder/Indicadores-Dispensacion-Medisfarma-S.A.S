@@ -6865,6 +6865,127 @@ function buildCorteMetrics(rows){
   });
   return out;
 }
+/* RECUPERACIONES validadas — FUENTE ÚNICA para la tabla del Reporte Comparativo
+   Periódico y para sus descargas de Excel, para que las cifras coincidan.
+   Una recuperación exige:
+   - que en la línea base (primer cargue de cada línea) estuviera pendiente / sin soporte,
+   - que al cierre del corte final ya esté entregada / con soporte,
+   - y que el cumplimiento llegue en una FECHA DISTINTA a la del pendiente: si el
+     pendiente y la entrega vienen con la misma fecha es la información del mismo día
+     y no hay entrega real que reconocer.
+   tipo: 'docs' (dispensas) | 'lineas' | 'soporte'. Devuelve una lista de items con
+   `bodega` y `corteRec` para poder agrupar por bodega y por corte.                */
+function recuperadasEnCortes(filtered, corteFinal, tipo){
+  if(!filtered || !filtered.length || !corteFinal || corteFinal<1) return [];
+  const estadoDe = (c)=>{
+    const e=calcularEstadoHastaCorte(filtered, c);
+    const lp=new Map(), byKey=new Map();
+    e.snap.forEach(r=>{
+      const k=claveLineaCargue(r);
+      lp.set(k, e.lineaPend.get(r.idx)==='SI' ? 'SI':'NO');
+      byKey.set(k, r);
+    });
+    return {lp, byKey, docPend:e.docPend, snap:e.snap};
+  };
+  const estados=[]; for(let c=0;c<=corteFinal;c++) estados.push(estadoDe(c));
+  const base=estados[0], fin=estados[corteFinal];
+  // Corte en el que una línea se acredita como ENTREGADA (null = no aplica).
+  const corteRecuperacionLinea = (k)=>{
+    if(base.lp.get(k)!=='SI') return null;         // nunca estuvo pendiente
+    const rb=base.byKey.get(k); if(!rb) return null;
+    for(let c=1;c<=corteFinal;c++){
+      if(estados[c].lp.get(k)!=='NO') continue;
+      const rc=estados[c].byKey.get(k);
+      if(rc && entregaEnFechaDistinta(rb, rc)) return c;
+    }
+    return null;
+  };
+
+  if(tipo==='soporte'){
+    const sinSopBase=new Map(), conSopFin=new Map(), info=new Map(), diaSinSop=new Map(), diaConSop=new Map();
+    filtered.forEach(r=>{
+      if(r.contrato!=='EVENTO' || !r.documento) return;
+      if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
+      if(tieneSoporteHastaCorte(r, 0)) sinSopBase.set(r.documento, false);
+      else {
+        if(!sinSopBase.has(r.documento)) sinSopBase.set(r.documento, true);
+        const d=diaCargue(r), prevD=diaSinSop.get(r.documento);
+        if(prevD===undefined || (d && d<prevD)) diaSinSop.set(r.documento, d);
+      }
+      if(tieneSoporteHastaCorte(r, corteFinal)){
+        const c=corteRecuperacionSoporte(r);
+        const cc=(c && c>=1 && c<=corteFinal) ? c : 0;
+        const prev=conSopFin.get(r.documento);
+        if(prev===undefined || cc<prev){ conSopFin.set(r.documento, cc); diaConSop.set(r.documento, diaSoporte(r)); }
+      }
+    });
+    const out=[];
+    conSopFin.forEach((corteRec, doc)=>{
+      if(sinSopBase.get(doc)!==true) return;      // ya tenía soporte desde el inicio
+      if(!corteRec) return;                      // sin corte de recuperación identificable
+      const dSop=diaConSop.get(doc)||'', dSin=diaSinSop.get(doc)||'';
+      if(!dSop || dSop===dSin) return;           // mismo día: el soporte no llegó después
+      const r=info.get(doc);
+      if(r) out.push({bodega:r.bodegaDetalle, corteRec, r, dSop, dSin});
+    });
+    return out;
+  }
+
+  if(tipo==='lineas'){
+    const out=[];
+    fin.lp.forEach((est,k)=>{
+      if(est!=='NO') return;                       // hoy sigue pendiente
+      const corteRec=corteRecuperacionLinea(k);    // valida estado + fechas distintas
+      if(!corteRec) return;
+      const r=estados[corteRec].byKey.get(k) || fin.byKey.get(k), rb=base.byKey.get(k);
+      if(!r) return;
+      out.push({bodega:r.bodegaDetalle, corteRec, r, rb});
+    });
+    return out;
+  }
+
+  // ---- dispensas (documentos) ----
+  const porDoc=new Map();
+  fin.snap.forEach(r=>{
+    if(!r.documento) return;
+    if(!porDoc.has(r.documento)) porDoc.set(r.documento, {
+      documento:r.documento, zona:r.zona, bodega:r.bodegaDetalle, eps:r.eps, epsGrupo:r.epsGrupo,
+      contrato:r.contrato, fecha:r.fecha, lineas:0, unidades:0, soporte:r.tieneSoportes, cargue:r.fechaCargue||''
+    });
+    const g=porDoc.get(r.documento);
+    g.lineas++; g.unidades+=(Number(r.unidades)||0);
+    if(String(r.fechaCargue||'')>String(g.cargue)) g.cargue=r.fechaCargue||'';
+  });
+  const pendBase=new Map(), recLineas=new Map();
+  base.snap.forEach(r=>{
+    if(!r.documento) return;
+    const k=claveLineaCargue(r);
+    if(base.lp.get(k)!=='SI') return;
+    pendBase.set(r.documento,(pendBase.get(r.documento)||0)+1);
+    if(corteRecuperacionLinea(k)) recLineas.set(r.documento,(recLineas.get(r.documento)||0)+1);
+  });
+  const out=[];
+  fin.docPend.forEach((pend, doc)=>{
+    if(pend!==false) return;                       // sigue pendiente
+    if(base.docPend.get(doc)!==true) return;       // ya estaba entregada desde el inicio
+    if(!recLineas.get(doc)) return;                // ninguna línea se entregó en fecha posterior
+    let corteRec=null;
+    for(let c=1;c<=corteFinal;c++){ if(estados[c].docPend.get(doc)===false){ corteRec=c; break; } }
+    if(!corteRec) return;
+    const g=porDoc.get(doc);
+    if(g) out.push({bodega:g.bodega, corteRec, g, pendBase:pendBase.get(doc)||0, recLineas:recLineas.get(doc)||0});
+  });
+  return out;
+}
+// Recuperaciones agrupadas por bodega y corte: Map bodega -> [c1, c2, c3].
+function recuperadasPorBodega(filtered, corteFinal, tipo){
+  const m=new Map();
+  recuperadasEnCortes(filtered, corteFinal, tipo).forEach(it=>{
+    if(!m.has(it.bodega)) m.set(it.bodega, [0,0,0]);
+    if(it.corteRec>=1 && it.corteRec<=3) m.get(it.bodega)[it.corteRec-1]++;
+  });
+  return m;
+}
 let periodicoTabActual='documento';
 function abrirReportePeriodico(tab){
   if(!state.processed){ showToast('Primero calcula los indicadores.', true); return; }
@@ -6940,10 +7061,11 @@ function renderReportePeriodico(){
   const fieldTot = periodicoTabActual==='documento' ? 'docsTotal' : periodicoTabActual==='linea' ? 'lineasTotal' : 'eventoTotal';
   const labelRec = periodicoTabActual==='soporte' ? 'Soportes recuperados' : (periodicoTabActual==='documento' ? 'Dispensas recuperadas' : 'Líneas recuperadas');
   const explicaRec = periodicoTabActual==='soporte'
-    ? 'Recuperado = dispensas de EVENTO que en un cargue anterior venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte.'
+    ? 'Recuperado = dispensas de EVENTO que venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte, <strong>siempre que el soporte tenga una fecha distinta a la del registro sin soporte</strong> (si es el mismo día se trata de la información de esa misma fecha, no de una recuperación).'
     : (periodicoTabActual==='documento'
-        ? 'Recuperado = dispensas que estaban pendientes y en un cargue posterior quedaron entregadas.'
-        : 'Recuperado = líneas que estaban pendientes y en un cargue posterior quedaron entregadas.');
+        ? 'Recuperado = dispensas que estaban pendientes y en un cargue posterior quedaron entregadas, <strong>siempre que la entrega tenga una fecha distinta a la del pendiente</strong> (si coinciden es el mismo día y no se cuenta).'
+        : 'Recuperado = líneas que estaban pendientes y en un cargue posterior quedaron entregadas, <strong>siempre que la entrega tenga una fecha distinta a la del pendiente</strong> (si coinciden es el mismo día y no se cuenta).');
+  const explicaCoincide = ' Estas cifras usan exactamente el mismo cálculo que el botón de descarga, por lo que el número de la columna “'+labelRec+'” coincide con la cantidad de filas del Excel.';
 
   // ---- helpers de lectura de métricas ----
   const findEntry=(corte,bodega)=>metrics[corte].find(x=>x.bodega===bodega);
@@ -6984,6 +7106,13 @@ function renderReportePeriodico(){
   const notaPrevio = (corteFinal===0 || !estadosPrevios.length) ? ''
     : 'La columna <strong>Anterior</strong> se calcula por bodega: compara contra el último cargue en el que <strong>esa</strong> bodega tuvo cifras distintas (<strong>base</strong> = primer cargue, <strong>C1/C2/C3</strong> = corte), y esa referencia se indica en cada celda. Así la variación se ve igual con o sin filtro de bodega.';
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
+  /* Recuperadas: se toman de la MISMA función que alimenta las descargas de Excel
+     (`recuperadasEnCortes`), de modo que el número de la tabla y el número de filas
+     del archivo descargado siempre coincidan. Ya no se estima por diferencia de
+     pendientes entre cortes, porque esa resta contaba también movimientos que no son
+     entregas reales (por ejemplo, información del mismo día). */
+  const tipoRec = periodicoTabActual==='soporte' ? 'soporte' : (periodicoTabActual==='documento' ? 'docs' : 'lineas');
+  const mapRec = recuperadasPorBodega(filtered, corteFinal, tipoRec);
   const filas=bodegas.map(bodega=>{
     const total=valT(corteFinal,bodega);
     const entFinal=valA(corteFinal,bodega), pendFinal=valB(corteFinal,bodega);
@@ -6994,15 +7123,12 @@ function renderReportePeriodico(){
     const cortes=[1,2,3].map(c=>activo(c)
       ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false, fuera:false}
       : {ent:0, pend:0, sin:!fuera(c), fuera:fuera(c)});
-    const rec=[1,2,3].map(c=>{
-      if(!activo(c)) return 0;
-      if(periodicoTabActual==='soporte') return (findEntry(c,bodega)||{}).eventoRec||0;
-      const prev=corteVigenteHasta(cortesActivos, c-1);
-      return Math.max(0, valB(prev,bodega)-valB(c,bodega));
-    });
+    /* Se cuenta cada recuperación en el corte en que ocurrió, sin descartar cortes:
+       así el total de la columna coincide exactamente con las filas del Excel. */
+    const rec=(mapRec.get(bodega)||[0,0,0]).slice(0,3).map(v=>v||0);
     const recTotal=rec.reduce((a,b)=>a+b,0);
     return {bodega, total, entFinal, pendFinal, entPrev, pendPrev, refPrev:cPrevB, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
-  }).filter(f=>f.total||f.entFinal||f.pendFinal)
+  }).filter(f=>f.total||f.entFinal||f.pendFinal||f.recTotal)
     .sort((a,b)=>{
       const ia=a.indice===null?-1:a.indice, ib=b.indice===null?-1:b.indice;
       if(ib!==ia) return ib-ia;
@@ -7162,7 +7288,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+notaPrevio+' '+explicaRec+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+notaPrevio+' '+explicaRec+explicaCoincide+'</p>'
     +'<div class="table-wrap" style="max-height:min(70vh,760px);">'
     +'<table class="data" id="tblPeriodico"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
@@ -7294,50 +7420,15 @@ document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>
   if(corteFinal===0){
     showToast('Aún no hay cargues en los cortes: no hay recuperaciones que descargar.', true); return;
   }
-  // Estado de cada corte (0 = línea base). Se indexa por la identidad de la línea,
-  // porque en cada corte la línea puede venir de una versión distinta del cargue.
-  const estadoDe = (c)=>{
-    const e=calcularEstadoHastaCorte(filtered, c);
-    const lp=new Map(), byKey=new Map();
-    e.snap.forEach(r=>{
-      const k=claveLineaCargue(r);
-      lp.set(k, e.lineaPend.get(r.idx)==='SI' ? 'SI':'NO');
-      byKey.set(k, r);
-    });
-    return {lp, byKey, docPend:e.docPend, snap:e.snap};
-  };
-  const estados=[]; for(let c=0;c<=corteFinal;c++) estados.push(estadoDe(c));
-  const base=estados[0], fin=estados[corteFinal];
+  // Las recuperaciones se calculan con la MISMA función que alimenta la tabla del
+  // modal, para que el número mostrado y las filas descargadas coincidan siempre.
   const etqRec = c => 'corte '+c;
-  // Corte en el que una línea se acredita como ENTREGADA.
-  // Además de coincidir dispensa + código + bodega detalle y de cerrar la cantidad
-  // (unidades / diferencia), la entrega debe llegar en una FECHA DISTINTA a la del
-  // pendiente: si el pendiente y la entrega vienen con la misma fecha, es el mismo
-  // día de información y no hay entrega real que reconocer. null = no aplica.
-  const corteRecuperacionLinea = (k)=>{
-    if(base.lp.get(k)!=='SI') return null;         // nunca estuvo pendiente
-    const rb=base.byKey.get(k); if(!rb) return null;
-    for(let c=1;c<=corteFinal;c++){
-      if(estados[c].lp.get(k)!=='NO') continue;
-      const rc=estados[c].byKey.get(k);
-      if(rc && entregaEnFechaDistinta(rb, rc)) return c;
-    }
-    return null;
-  };
   let filas=[], hoja='', archivo='', etqMsg='';
 
   if(tipo==='lineas'){
     hoja='Líneas recuperadas'; archivo='Periodico_Lineas_Entregadas_Recuperadas';
     etqMsg='líneas que pasaron de pendientes a entregadas en fecha posterior';
-    const out=[];
-    fin.lp.forEach((est,k)=>{
-      if(est!=='NO') return;                       // hoy sigue pendiente
-      const corteRec=corteRecuperacionLinea(k);    // valida estado + fechas distintas
-      if(!corteRec) return;
-      const r=estados[corteRec].byKey.get(k) || fin.byKey.get(k), rb=base.byKey.get(k);
-      if(!r) return;
-      out.push({r, rb, corteRec});
-    });
+    const out=recuperadasEnCortes(filtered, corteFinal, 'lineas');
     filas=out
       .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.r.bodegaDetalle+a.r.documento).localeCompare(String(b.r.bodegaDetalle+b.r.documento),'es'))
       .map(({r, rb, corteRec})=>({
@@ -7359,33 +7450,9 @@ document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>
   } else if(tipo==='soporte'){
     hoja='Soportes recuperados'; archivo='Periodico_Evento_Soporte_Recuperado';
     etqMsg='dispensas de evento que cargaron el soporte en una fecha posterior';
-    // Igual que en las entregas, el soporte solo se acredita como recuperado si llegó
-    // en una FECHA DISTINTA a la del registro que estaba sin soporte.
-    const sinSopBase=new Map(), conSopFin=new Map(), info=new Map(), diaSinSop=new Map(), diaConSop=new Map();
-    filtered.forEach(r=>{
-      if(r.contrato!=='EVENTO' || !r.documento) return;
-      if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
-      if(tieneSoporteHastaCorte(r, 0)) sinSopBase.set(r.documento, false);
-      else {
-        if(!sinSopBase.has(r.documento)) sinSopBase.set(r.documento, true);
-        const d=diaCargue(r), prevD=diaSinSop.get(r.documento);
-        if(prevD===undefined || (d && d<prevD)) diaSinSop.set(r.documento, d);
-      }
-      if(tieneSoporteHastaCorte(r, corteFinal)){
-        const c=corteRecuperacionSoporte(r);
-        const cc=(c && c>=1 && c<=corteFinal) ? c : 0;
-        const prev=conSopFin.get(r.documento);
-        if(prev===undefined || cc<prev){ conSopFin.set(r.documento, cc); diaConSop.set(r.documento, diaSoporte(r)); }
-      }
-    });
-    const out=[];
-    conSopFin.forEach((corteRec, doc)=>{
-      if(sinSopBase.get(doc)!==true) return;      // ya tenía soporte desde el inicio
-      if(!corteRec) return;                      // sin corte de recuperación identificable
-      const dSop=diaConSop.get(doc)||'', dSin=diaSinSop.get(doc)||'';
-      if(!dSop || dSop===dSin) return;           // mismo día: no es un soporte cargado después
-      const r=info.get(doc); if(r) out.push({r, corteRec, dSop, dSin});
-    });
+    // El soporte solo se acredita como recuperado si llegó en una FECHA DISTINTA a la
+    // del registro que estaba sin soporte (misma regla que usa la tabla del modal).
+    const out=recuperadasEnCortes(filtered, corteFinal, 'soporte');
     filas=out
       .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.r.bodegaDetalle+a.r.documento).localeCompare(String(b.r.bodegaDetalle+b.r.documento),'es'))
       .map(({r, corteRec, dSop, dSin})=>({
@@ -7401,51 +7468,17 @@ document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>
   } else {
     hoja='Dispensas recuperadas'; archivo='Periodico_Dispensas_Entregadas_Recuperadas';
     etqMsg='dispensas que pasaron de pendientes a entregadas en fecha posterior';
-    // Detalle de cada dispensa recuperada (líneas y unidades al cierre del corte).
-    const porDoc=new Map();
-    fin.snap.forEach(r=>{
-      if(!r.documento) return;
-      if(!porDoc.has(r.documento)) porDoc.set(r.documento, {
-        documento:r.documento, zona:r.zona, bodega:r.bodegaDetalle, eps:r.eps, epsGrupo:r.epsGrupo,
-        contrato:r.contrato, fecha:r.fecha, lineas:0, unidades:0, soporte:r.tieneSoportes, cargue:r.fechaCargue||''
-      });
-      const g=porDoc.get(r.documento);
-      g.lineas++; g.unidades+=(Number(r.unidades)||0);
-      if(String(r.fechaCargue||'')>String(g.cargue)) g.cargue=r.fechaCargue||'';
-    });
-    // Líneas que estaban pendientes en la línea base, por documento.
-    const pendBase=new Map();
-    base.snap.forEach(r=>{
-      if(!r.documento) return;
-      if(base.lp.get(claveLineaCargue(r))==='SI') pendBase.set(r.documento,(pendBase.get(r.documento)||0)+1);
-    });
-    // Líneas de cada dispensa cuya entrega llegó en una fecha distinta a la del pendiente.
-    const recLineas=new Map();
-    base.snap.forEach(r=>{
-      if(!r.documento) return;
-      if(base.lp.get(claveLineaCargue(r))!=='SI') return;
-      if(!corteRecuperacionLinea(claveLineaCargue(r))) return;
-      recLineas.set(r.documento,(recLineas.get(r.documento)||0)+1);
-    });
-    const out=[];
-    fin.docPend.forEach((pend, doc)=>{
-      if(pend!==false) return;                       // sigue pendiente
-      if(base.docPend.get(doc)!==true) return;       // ya estaba entregada desde el inicio
-      if(!recLineas.get(doc)) return;                // ninguna línea se entregó en fecha posterior
-      let corteRec=null;
-      for(let c=1;c<=corteFinal;c++){ if(estados[c].docPend.get(doc)===false){ corteRec=c; break; } }
-      if(!corteRec) return;
-      const g=porDoc.get(doc); if(g) out.push({g, corteRec});
-    });
+    // Detalle de cada dispensa recuperada (misma regla que usa la tabla del modal).
+    const out=recuperadasEnCortes(filtered, corteFinal, 'docs');
     filas=out
       .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.g.bodega+a.g.documento).localeCompare(String(b.g.bodega+b.g.documento),'es'))
-      .map(({g, corteRec})=>({
+      .map(({g, corteRec, pendBase, recLineas})=>({
         'Zona':g.zona, 'Bodega Detalle':g.bodega, 'Documento':g.documento,
         'EPS':g.eps, 'EPS Consolidada':g.epsGrupo, 'Modalidad':g.contrato,
         'Fecha Dispensación':periodicoFechaTxt(g.fecha),
         'Líneas de la dispensa':g.lineas,
-        'Líneas pendientes al inicio':pendBase.get(g.documento)||0,
-        'Líneas entregadas en fecha posterior':recLineas.get(g.documento)||0,
+        'Líneas pendientes al inicio':pendBase||0,
+        'Líneas entregadas en fecha posterior':recLineas||0,
         'Unidades entregadas':g.unidades,
         'Entregada en':etqRec(corteRec),
         'Fecha del cargue que la entregó':g.cargue,
