@@ -317,7 +317,9 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
 #periodicoFilters .field{display:flex;flex-direction:column;gap:4px;}
 #periodicoFilters .field label{font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;}
 #periodicoFilters .field select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;}
-.prev-val{display:block;color:#9CA9B6;font-size:11px;font-weight:600;line-height:1.3;}
+/* El valor "Anterior" va en su propia linea dentro de la celda y puede repartirse en
+   varias lineas: asi nunca se monta sobre la columna vecina. */
+.prev-val{display:block;color:#9CA9B6;font-size:11px;font-weight:600;line-height:1.3;white-space:normal;overflow-wrap:anywhere;}
 .prev-val-inline{color:#9CA9B6;font-weight:600;}
 
 /* Reporte Comparativo Periodico: este modal tiene muchas columnas, por eso se le da
@@ -330,8 +332,7 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
 #periodicModal #tblPeriodico thead th{padding:8px 9px;font-size:11.5px;}
 #periodicModal #tblPeriodico thead tr.sub th{font-size:11px;}
 #periodicModal #tblPeriodico tbody td{padding:7px 9px;}
-#periodicModal .prev-val{font-size:11.5px;}
-#periodicModal .corte-card svg{width:170px;height:170px;}
+#periodicModal .prev-val{font-size:11.5px;}#periodicModal .corte-card svg{width:170px;height:170px;}
 @media (max-width:1100px){
   #periodicModal{padding:6px;}
   #periodicModal .modal-box{width:100vw;max-height:98vh;padding:16px 12px;border-radius:10px;}
@@ -342,20 +343,23 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
    asi al desplazarse en horizontal por los cortes siempre se ve la referencia. */
 #tblPeriodico thead tr:first-child th:nth-child(1),#tblPeriodico tbody td:nth-child(1){width:200px;min-width:200px;max-width:200px;}
 #tblPeriodico thead tr:first-child th:nth-child(2),#tblPeriodico tbody td:nth-child(2){width:76px;min-width:76px;max-width:76px;}
-#tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico tbody td:nth-child(3){width:150px;min-width:150px;max-width:150px;}
-#tblPeriodico thead tr:first-child th:nth-child(4),#tblPeriodico tbody td:nth-child(4){width:150px;min-width:150px;max-width:150px;}
+#tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico tbody td:nth-child(3){width:172px;min-width:172px;max-width:172px;}
+#tblPeriodico thead tr:first-child th:nth-child(4),#tblPeriodico tbody td:nth-child(4){width:172px;min-width:172px;max-width:172px;}
+/* Estas dos columnas llevan el valor actual y debajo la referencia anterior: se permite
+   que el texto se reparta en varias lineas para que no se desborde de la celda. */
+#tblPeriodico tbody td:nth-child(3),#tblPeriodico tbody td:nth-child(4){white-space:normal;overflow:hidden;vertical-align:top;}
 #tblPeriodico thead tr:first-child th:nth-child(1),#tblPeriodico thead tr:first-child th:nth-child(2),
 #tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico thead tr:first-child th:nth-child(4){position:sticky;z-index:7;white-space:normal;}
 #tblPeriodico thead tr:first-child th:nth-child(1){left:0;}
 #tblPeriodico thead tr:first-child th:nth-child(2){left:200px;}
 #tblPeriodico thead tr:first-child th:nth-child(3){left:276px;}
-#tblPeriodico thead tr:first-child th:nth-child(4){left:426px;box-shadow:2px 0 0 rgba(255,255,255,0.22);}
+#tblPeriodico thead tr:first-child th:nth-child(4){left:448px;box-shadow:2px 0 0 rgba(255,255,255,0.22);}
 #tblPeriodico tbody td:nth-child(1),#tblPeriodico tbody td:nth-child(2),
 #tblPeriodico tbody td:nth-child(3),#tblPeriodico tbody td:nth-child(4){position:sticky;z-index:3;background:var(--white);}
 #tblPeriodico tbody td:nth-child(1){left:0;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;}
 #tblPeriodico tbody td:nth-child(2){left:200px;}
 #tblPeriodico tbody td:nth-child(3){left:276px;}
-#tblPeriodico tbody td:nth-child(4){left:426px;box-shadow:2px 0 0 var(--line);}
+#tblPeriodico tbody td:nth-child(4){left:448px;box-shadow:2px 0 0 var(--line);}
 #tblPeriodico tbody tr:nth-child(even) td:nth-child(1),#tblPeriodico tbody tr:nth-child(even) td:nth-child(2),
 #tblPeriodico tbody tr:nth-child(even) td:nth-child(3),#tblPeriodico tbody tr:nth-child(even) td:nth-child(4){background:#F7FAFD;}
 #tblPeriodico tbody tr:hover td:nth-child(1),#tblPeriodico tbody tr:hover td:nth-child(2),
@@ -1111,6 +1115,17 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <button class="btn btn-export" id="btnPeriodicoDocsPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas no entregadas (Excel)</button>
       <button class="btn btn-export" id="btnPeriodicoLineasPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Líneas pendientes (Excel)</button>
       <button class="btn btn-export" id="btnPeriodicoEventoSinSop" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas de evento sin soporte (Excel)</button>
+    </div>
+    <div id="periodicoDescargasOk" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">
+      <div class="field" style="display:flex;flex-direction:column;gap:4px;min-width:260px;">
+        <label style="font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;">Descarga de cumplidas</label>
+        <select id="pfEntregadasTipo" style="padding:7px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;">
+          <option value="docs">Dispensas entregadas</option>
+          <option value="lineas">Líneas entregadas</option>
+          <option value="soporte">Dispensas con soporte</option>
+        </select>
+      </div>
+      <button class="btn btn-export" id="btnPeriodicoEntregadas" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar en Excel</button>
     </div>
     <p style="font-size:11.5px;color:var(--ink-soft);margin:0;">Las descargas respetan los filtros de este modal y el corte global seleccionado en los filtros del tablero.</p>
     <div class="modal-tabs">
@@ -7252,6 +7267,78 @@ document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Evento sin soporte');
   XLSX.writeFile(wb, 'Periodico_Evento_Sin_Soporte_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
   showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas de evento sin soporte ('+etqCorte+').');
+});
+/* 4) Descarga de lo CUMPLIDO al cierre del corte. El selector define qué se exporta:
+      - docs    : dispensas (documentos) totalmente entregadas
+      - lineas  : líneas entregadas (sin cantidad pendiente)
+      - soporte : dispensas que ya cuentan con soporte cargado                */
+document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>{
+  const ctx=periodicoContextoExport(); if(!ctx) return;
+  const {filtered, estado, corteFinal, etqCorte} = ctx;
+  const tipo=(document.getElementById('pfEntregadasTipo')||{}).value || 'docs';
+  let filas=[], hoja='', archivo='', etqMsg='';
+
+  if(tipo==='lineas'){
+    hoja='Líneas entregadas'; archivo='Periodico_Lineas_Entregadas'; etqMsg='líneas entregadas';
+    filas=estado.snap.filter(r=>estado.lineaPend.get(r.idx)!=='SI')
+      .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
+      .map(r=>({
+        'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
+        'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
+        'Fecha Dispensación':periodicoFechaTxt(r.fecha),
+        'Código Artículo':r.codigoArticulo,
+        'Descripción':String(r.descripcionDci||'').trim() || String(r.descripcionReporte||'').trim(),
+        'Molécula':r.moleculaPareto,
+        'Cantidad Autorizada':r.cantidadAutorizada, 'Unidades Entregadas':r.unidades,
+        'Diferencia':r.diferencia,
+        'Soportes':r.tieneSoportes, 'Estado al':etqCorte
+      }));
+  } else if(tipo==='soporte'){
+    hoja='Dispensas con soporte'; archivo='Periodico_Dispensas_Con_Soporte'; etqMsg='dispensas con soporte';
+    const conSoporte=new Set(), info=new Map();
+    filtered.forEach(r=>{
+      if(!r.documento) return;
+      if(tieneSoporteHastaCorte(r, corteFinal)) conSoporte.add(r.documento);
+      if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
+    });
+    filas=[...info.values()].filter(r=>conSoporte.has(r.documento))
+      .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
+      .map(r=>({
+        'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
+        'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
+        'Fecha Dispensación':periodicoFechaTxt(r.fecha),
+        'Soportes':r.tieneSoportes, 'Fecha del cargue':r.fechaCargue||'',
+        'Estado al':etqCorte
+      }));
+  } else {
+    hoja='Dispensas entregadas'; archivo='Periodico_Dispensas_Entregadas'; etqMsg='dispensas entregadas';
+    const porDoc=new Map();
+    estado.snap.forEach(r=>{
+      if(!r.documento) return;
+      if(estado.docPend.get(r.documento)===true) return;   // sigue pendiente: no aplica
+      if(!porDoc.has(r.documento)) porDoc.set(r.documento, {
+        documento:r.documento, zona:r.zona, bodega:r.bodegaDetalle, eps:r.eps, epsGrupo:r.epsGrupo,
+        contrato:r.contrato, fecha:r.fecha, lineas:0, unidades:0, soporte:r.tieneSoportes
+      });
+      const g=porDoc.get(r.documento);
+      g.lineas++; g.unidades+=(Number(r.unidades)||0);
+    });
+    filas=[...porDoc.values()]
+      .sort((a,b)=>String(a.bodega+a.documento).localeCompare(String(b.bodega+b.documento),'es'))
+      .map(g=>({
+        'Zona':g.zona, 'Bodega Detalle':g.bodega, 'Documento':g.documento,
+        'EPS':g.eps, 'EPS Consolidada':g.epsGrupo, 'Modalidad':g.contrato,
+        'Fecha Dispensación':periodicoFechaTxt(g.fecha),
+        'Líneas de la dispensa':g.lineas, 'Unidades entregadas':g.unidades,
+        'Soportes':g.soporte, 'Estado al':etqCorte
+      }));
+  }
+
+  if(!filas.length){ showToast('No hay '+etqMsg+' con los filtros y el corte actuales.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), hoja);
+  XLSX.writeFile(wb, archivo+'_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('Excel exportado: '+fmtInt(filas.length)+' '+etqMsg+' ('+etqCorte+').');
 });
 
 /* =========================================================================
