@@ -5221,17 +5221,24 @@ function setupGenericPieSelector(selectId, svgId, legendId, table, aggregateFn, 
     const selVal=sel.value;
     const row = selVal==='__ALL__' ? aggregateFn(table) : table.find(t=>t.bodega===selVal);
     const slices = row ? getSlices(row) : [];
-    const total = slices.reduce((a,b)=>a+(b.value||0),0);
+    const sumSlices = slices.reduce((a,b)=>a+(b.value||0),0);
+    // Base de referencia del gráfico. Por defecto es la suma de los segmentos, pero
+    // cuando un mismo registro puede caer en varios segmentos (p. ej. una línea que
+    // pertenece a dos cohortes) se indica el total REAL con opts.totalFn para que el
+    // número del centro coincida con los KPIs y con la otra dona.
+    const total = (opts.totalFn && row) ? (opts.totalFn(row, slices) || 0) : sumSlices;
     let centerText;
     if (opts.centerFn) centerText = opts.centerFn(slices, total);
     else if (mode==='count') centerText = fmtInt(total);
     else centerText = fmtPct(total);
     drawDonut(svgId, slices.length?slices:[{label:'',value:1,color:'#DCE4EC'}], centerText);
     const legend=document.getElementById(legendId);
+    const nota = (opts.notaFn && row) ? (opts.notaFn(row, slices, total, sumSlices) || '') : '';
     legend.innerHTML = slices.map(s=>{
       const valText = mode==='count' ? (fmtInt(s.value)+' ('+fmtPct(total? s.value/total:null)+')') : fmtPct(s.value);
       return `<div class="item"><span class="sw" style="background:${s.color};"></span>${s.label}<span class="val">${valText}</span></div>`;
-    }).join('') + `<div class="item" style="color:var(--ink-soft);font-size:11px;">${selVal==='__ALL__'?'General':selVal}</div>`;
+    }).join('') + `<div class="item" style="color:var(--ink-soft);font-size:11px;">${selVal==='__ALL__'?'General':selVal}</div>`
+      + (nota ? `<div class="item" style="color:var(--ink-soft);font-size:11px;line-height:1.4;">${nota}</div>` : '');
   };
   sel.onchange=draw;
   draw();
@@ -6492,9 +6499,16 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
     return fila;
   };
   if(tablaBodega.length){
+    // El centro de la dona muestra las LÍNEAS de la bodega (mismo total que la dona de
+    // entregadas/pendientes). La suma de los segmentos puede ser mayor porque una línea
+    // con dos diagnósticos cuenta en dos cohortes; en ese caso se avisa en la leyenda.
     setupGenericPieSelector('pieCohortesSelect','pieCohortes','pieCohortesLegend', tablaBodega, aggCoh,
       row=>COHORTES_DEF.map(c=>({label:c.label, value: row['c_'+c.key]||0, color:c.color})).filter(s=>s.value>0),
-      { mode:'count' });
+      { mode:'count',
+        totalFn:(row)=>row.lineas||0,
+        notaFn:(row, slices, total, sumSlices)=> sumSlices>total
+          ? ('Los porcentajes se calculan sobre '+fmtInt(total)+' líneas. '+fmtInt(sumSlices-total)+' líneas pertenecen a más de una cohorte y se cuentan en cada una, por eso la suma de las cohortes ('+fmtInt(sumSlices)+') es mayor.')
+          : '' });
     setupGenericPieSelector('pieCohortesPendSelect','pieCohortesPend','pieCohortesPendLegend', tablaBodega, aggCoh, row=>[
       {label:'Entregadas', value: row.ent||0, color:'#1E8F5E'},
       {label:'Pendientes', value: row.pen||0, color:'#D98A2B'}
