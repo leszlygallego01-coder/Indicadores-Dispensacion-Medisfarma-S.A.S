@@ -7220,6 +7220,13 @@ function renderReportePeriodico(){
   const dim='style="color:#9CA9B6;"';
   const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
   const tdSinCargueBod='<td '+dim+' title="Esta bodega no tuvo cargue (entrega ni dispensación) en este corte: el cargue de estas fechas no trajo información de la bodega">'+DASH+'</td>';
+  /* Un corte solo muestra cifras si en ese corte hubo ENTREGAS REALES para esa bodega,
+     usando exactamente la misma validación del Excel de descarga (recuperadasEnCortes).
+     Si la bodega no entregó nada en el corte, sus celdas quedan en “—” en lugar de
+     repetir el acumulado: así la tabla nunca muestra números donde el Excel no trae filas. */
+  const palabraEnt = periodicoTabActual==='soporte' ? 'soportes nuevos' : (periodicoTabActual==='documento' ? 'dispensas entregadas' : 'líneas entregadas');
+  const tdSinEntregaBod='<td '+dim+' title="Esta bodega no registró '+palabraEnt+' en este corte (0 en '+labelRec+'): las celdas quedan en “—” para no repetir el acumulado. Coincide con el Excel de descarga.">'+DASH+'</td>';
+  const tdSinEntregaTot='<td '+dim+' title="Ninguna bodega registró '+palabraEnt+' en este corte (0 en '+labelRec+')">'+DASH+'</td>';
   const tdFueraRP='<td style="color:#C3CCD6;" title="Corte posterior al corte global seleccionado en los filtros">'+DASH+'</td>';
   const tdSinCambioRP='<td '+dim+' title="Sin cambios frente al corte anterior: esta bodega no presentó movimientos nuevos en este corte">'+DASH+'</td>';
   // Solo se muestran cifras cuando el corte trae cambios reales frente al corte previo mostrado.
@@ -7234,7 +7241,7 @@ function renderReportePeriodico(){
   };
   const filasMk = filas.map(f=>marcaSinCambio(f.cortes, f.base));
   // Un corte solo se rotula con cifras si al menos una bodega cambió en ese corte.
-  const rpCambio = [0,1,2].map(i=>filasMk.some(mk=>!mk[i].fuera && !mk[i].sin && !mk[i].igual));
+  const rpCambio = [0,1,2].map(i=>filasMk.some((mk,fi)=>!mk[i].fuera && !mk[i].sin && !mk[i].igual && !!filas[fi].rec[i]));
   let cuerpo=filas.map((f,fi)=>{
     const cortesMk = filasMk[fi];
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
@@ -7245,6 +7252,7 @@ function renderReportePeriodico(){
     [0,1,2].forEach(i=>{
       if(cortesMk[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
       if(cortesMk[i].sin){ tds+=(cortesMk[i].sinBod?tdSinCargueBod+tdSinCargueBod:tdSinCargue+tdSinCargue); return; }
+      if(!f.rec[i]){ tds+=tdSinEntregaBod+tdSinEntregaBod; return; }
       if(cortesMk[i].igual){ tds+=tdSinCambioRP+tdSinCambioRP; return; }
       tds+='<td>'+fmtInt(cortesMk[i].ent)+'</td><td>'+fmtInt(cortesMk[i].pend)+'</td>';
     });
@@ -7260,6 +7268,7 @@ function renderReportePeriodico(){
   [0,1,2].forEach(i=>{
     if(totMk[i].fuera){ filaTotal+=tdFueraRP+tdFueraRP; return; }
     if(totMk[i].sin){ filaTotal+=tdSinCargue+tdSinCargue; return; }
+    if(!tot.rec[i]){ filaTotal+=tdSinEntregaTot+tdSinEntregaTot; return; }
     if(totMk[i].igual){ filaTotal+=tdSinCambioRP+tdSinCambioRP; return; }
     filaTotal+='<td>'+fmtInt(totMk[i].ent)+'</td><td>'+fmtInt(totMk[i].pend)+'</td>';
   });
@@ -7267,9 +7276,11 @@ function renderReportePeriodico(){
 
   const etiqCorte = (c, txt) => fuera(c)
     ? '<th colspan="2" style="color:#C3CCD6;">'+txt+' <span style="font-weight:600;">· fuera del corte</span></th>'
-    : (activo(c) && !rpCambio[c-1])
-      ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin cambios</span></th>'
-      : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
+    : (activo(c) && !tot.rec[c-1])
+      ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin entregas</span></th>'
+      : (activo(c) && !rpCambio[c-1])
+        ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin cambios</span></th>'
+        : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
   let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th>'
     +'<th rowspan="2">'+labelEnt+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior (dif.)</span></th>'
     +'<th rowspan="2">'+labelPend+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior (dif.)</span></th>'
@@ -7282,9 +7293,11 @@ function renderReportePeriodico(){
     ? '<th style="color:#C3CCD6;">Fuera del corte</th><th style="color:#C3CCD6;">Fuera del corte</th>'
     : !activo(c)
       ? '<th style="color:#9CA9B6;">Sin cargue</th><th style="color:#9CA9B6;">Sin cargue</th>'
-      : !rpCambio[c-1]
-        ? '<th style="color:#9CA9B6;">Sin cambios</th><th style="color:#9CA9B6;">Sin cambios</th>'
-        : '<th>'+labelEnt+'</th><th>'+labelPend+'</th>';
+      : !tot.rec[c-1]
+        ? '<th style="color:#9CA9B6;">Sin entregas</th><th style="color:#9CA9B6;">Sin entregas</th>'
+        : !rpCambio[c-1]
+          ? '<th style="color:#9CA9B6;">Sin cambios</th><th style="color:#9CA9B6;">Sin cambios</th>'
+          : '<th>'+labelEnt+'</th><th>'+labelPend+'</th>';
   let ths2='<tr>'+subCorte(1)+subCorte(2)+subCorte(3)+'</tr>';
 
   // ---- 3 gráficos, uno por corte (acumulado al cierre de cada corte) ----
@@ -7341,7 +7354,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si esa bodega tuvo cargue (entrega o dispensación) en ese corte</strong>. Si el cargue de esas fechas no trajo información de la bodega, sus celdas quedan en “—” y no repiten las cifras del corte anterior. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+notaPrevio+' '+explicaRec+explicaCoincide+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si esa bodega registró movimiento real en ese corte</strong>: si no hubo cargue de la bodega o no hubo ninguna entrega/soporte nuevo (columna “'+labelRec+'” en 0), sus celdas quedan en “—” y no repiten las cifras del corte anterior. Así las celdas con números coinciden siempre con lo que trae el Excel de descarga. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+notaPrevio+' '+explicaRec+explicaCoincide+'</p>'
     +'<div class="table-wrap" style="max-height:min(70vh,760px);">'
     +'<table class="data" id="tblPeriodico"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
