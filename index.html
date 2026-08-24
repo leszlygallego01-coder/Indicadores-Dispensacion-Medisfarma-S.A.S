@@ -275,6 +275,10 @@ table.data tbody tr.total-row td{border-top:2px solid var(--green);color:var(--g
 #tblLinea tbody tr.total-row td:nth-child(1),#tblLinea tbody tr.total-row td:nth-child(2),
 #tblSoporte tbody tr.total-row td:nth-child(1),#tblSoporte tbody tr.total-row td:nth-child(2){background:var(--green-soft);z-index:4;}
 
+/* Colores de agrupación en el indicador por línea: Pareto (verde azulado) y No Pareto (verde oliva) */
+#tblLinea thead th.grp-pareto{background:#5F9EA0;color:#fff;}
+#tblLinea thead th.grp-nopareto{background:#556B2F;color:#fff;}
+
 /* Encabezados ordenables (Indicador Soporte Evento) */
 table.data thead th.sortable{cursor:pointer;user-select:none;}
 table.data thead th.sortable:hover{filter:brightness(1.15);}
@@ -568,7 +572,26 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
             <p class="seg-desc" style="margin:8px 0 0;font-size:11px;">Las imágenes del Top 20 incluyen la zona, las 20 bodegas detalle y el gráfico general de ese grupo.</p>
           </div>
           <div class="table-wrap" style="margin-bottom:0;">
-            <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las marcadas como INACTIVO se excluyen (ver pestaña <i>Dispensas Inactivas</i>). &nbsp;<b>Orden:</b> bodegas ordenadas por <b>Índice pendiente</b> de mayor a menor (las más críticas primero).</p>
+            <p class="seg-desc" style="margin-bottom:8px;"><b>Alcance:</b> se cuentan <b>solo las dispensas con Estado Activo</b>; las marcadas como INACTIVO se excluyen (ver pestaña <i>Dispensas Inactivas</i>). &nbsp;<b>Orden:</b> por defecto de <b>Índice pendiente</b> de mayor a menor; usa el filtro de abajo (o haz clic en los encabezados <i>Total</i>, <i>Entregadas</i>, <i>Pendientes</i>, <i>Indicador eficiencia</i>, <i>Índice pendiente</i>) para cambiarlo.</p>
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+              <div class="field" style="max-width:230px;margin-bottom:0;">
+                <label>Ordenar por</label>
+                <select id="fDispensaOrdenCol">
+                  <option value="dispensas">Total</option>
+                  <option value="dispensasEntregadas">Entregadas</option>
+                  <option value="dispensasPendientes">Pendientes</option>
+                  <option value="efDispensa">Indicador eficiencia</option>
+                  <option value="pendDispensa">Índice pendiente</option>
+                </select>
+              </div>
+              <div class="field" style="max-width:210px;margin-bottom:0;">
+                <label>Dirección</label>
+                <select id="fDispensaOrdenDir">
+                  <option value="desc">De mayor a menor</option>
+                  <option value="asc">De menor a mayor</option>
+                </select>
+              </div>
+            </div>
             <table class="data" id="tblDispensa">
               <thead>
                 <tr>
@@ -577,8 +600,11 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
                   <th colspan="2">Indicadores</th>
                 </tr>
                 <tr class="sub">
-                  <th>Total</th><th>Entregadas</th><th>Pendientes</th>
-                  <th>Indicador eficiencia</th><th>Índice pendiente</th>
+                  <th class="sortable" data-col="dispensas" title="Clic para ordenar por Total">Total<span class="sort-ind">⇅</span></th>
+                  <th class="sortable" data-col="dispensasEntregadas" title="Clic para ordenar por Entregadas">Entregadas<span class="sort-ind">⇅</span></th>
+                  <th class="sortable" data-col="dispensasPendientes" title="Clic para ordenar por Pendientes">Pendientes<span class="sort-ind">⇅</span></th>
+                  <th class="sortable" data-col="efDispensa" title="Clic para ordenar por Indicador eficiencia">Indicador eficiencia<span class="sort-ind">⇅</span></th>
+                  <th class="sortable" data-col="pendDispensa" title="Clic para ordenar por Índice pendiente">Índice pendiente<span class="sort-ind">⇅</span></th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -648,11 +674,11 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <tr>
                 <th rowspan="2">Zona</th><th rowspan="2">Bodega</th>
                 <th colspan="4">Líneas</th>
-                <th colspan="2">Pareto</th>
-                <th colspan="2">No pareto</th>
+                <th colspan="2" class="grp-pareto">Pareto</th>
+                <th colspan="2" class="grp-nopareto">No pareto</th>
                 <th colspan="2">Cierre (agotados)</th>
-                <th colspan="6">Eficiencia Pareto (cantidad)</th>
-                <th colspan="6">Eficiencia No Pareto (cantidad)</th>
+                <th colspan="6" class="grp-pareto">Eficiencia Pareto (cantidad)</th>
+                <th colspan="6" class="grp-nopareto">Eficiencia No Pareto (cantidad)</th>
               </tr>
               <tr class="sub">
                 <th>Total</th><th>Entregadas</th><th>Pendientes</th>
@@ -4688,7 +4714,28 @@ function renderIndicadorDispensa(rowsAllRaw, bodegaSearch, zona){
   });
   lastTables.dispensa=table;
 
+  pintarTablaDispensa();
+
+  // ---- 1.13 gráfico de pastel (por bodega o general) ----
+  renderPieSelector(table);
+}
+
+// Orden configurable de la tabla del indicador por dispensa.
+let dispensaOrden={col:'pendDispensa', dir:'desc'};
+
+function pintarTablaDispensa(){
   const tbody=document.querySelector('#tblDispensa tbody');
+  if(!tbody) return;
+  const table=(lastTables.dispensa||[]).slice();
+  const col=dispensaOrden.col, dir=(dispensaOrden.dir==='asc')?1:-1;
+  table.sort((a,b)=>{
+    const va=(a[col]==null)?-1:a[col], vb=(b[col]==null)?-1:b[col];
+    if(va===vb){
+      if((b.dispensasPendientes||0)!==(a.dispensasPendientes||0)) return (b.dispensasPendientes||0)-(a.dispensasPendientes||0);
+      return String(a.zona+a.bodega).localeCompare(String(b.zona+b.bodega),'es');
+    }
+    return (va-vb)*dir;
+  });
   let bodyHtml = table.map(t=>`
     <tr>
       <td class="txt">${t.zona}</td><td class="txt">${t.bodega}</td>
@@ -4704,10 +4751,38 @@ function renderIndicadorDispensa(rowsAllRaw, bodegaSearch, zona){
       <td class="${effClass(tD?tE/tD:null)}">${fmtPct(tD?tE/tD:null)}</td><td class="${pendClass(tD?1-tE/tD:null)}">${fmtPct(tD?1-tE/tD:null)}</td></tr>`;
   }
   tbody.innerHTML=bodyHtml;
-
-  // ---- 1.13 gráfico de pastel (por bodega o general) ----
-  renderPieSelector(table);
+  actualizarControlesOrdenDispensa();
 }
+
+function actualizarControlesOrdenDispensa(){
+  document.querySelectorAll('#tblDispensa thead th.sortable').forEach(th=>{
+    const ind=th.querySelector('.sort-ind');
+    const activo = th.dataset.col===dispensaOrden.col;
+    th.classList.toggle('sort-active', activo);
+    if(ind) ind.textContent = activo ? (dispensaOrden.dir==='asc'?'▲':'▼') : '⇅';
+  });
+  const selCol=document.getElementById('fDispensaOrdenCol');
+  const selDir=document.getElementById('fDispensaOrdenDir');
+  if(selCol) selCol.value=dispensaOrden.col;
+  if(selDir) selDir.value=dispensaOrden.dir;
+}
+
+function initOrdenDispensa(){
+  const selCol=document.getElementById('fDispensaOrdenCol');
+  const selDir=document.getElementById('fDispensaOrdenDir');
+  if(selCol) selCol.addEventListener('change', ()=>{ dispensaOrden.col=selCol.value; pintarTablaDispensa(); });
+  if(selDir) selDir.addEventListener('change', ()=>{ dispensaOrden.dir=selDir.value; pintarTablaDispensa(); });
+  document.querySelectorAll('#tblDispensa thead th.sortable').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const c=th.dataset.col;
+      if(dispensaOrden.col===c) dispensaOrden.dir=(dispensaOrden.dir==='asc')?'desc':'asc';
+      else { dispensaOrden.col=c; dispensaOrden.dir='desc'; }
+      pintarTablaDispensa();
+    });
+  });
+  actualizarControlesOrdenDispensa();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initOrdenDispensa); else initOrdenDispensa();
 
 function renderPieSelector(table){
   const sel=document.getElementById('pieBodegaSelect');
@@ -4864,11 +4939,15 @@ function descargarImagenTopBodegasDispensa(modo){
   const tabla = (lastTables && lastTables.dispensa) ? lastTables.dispensa : null;
   if(!tabla || !tabla.length){ showToast('Primero calcula los indicadores.', true); return; }
 
+  const esEf = (modo === 'eficiencia');
   // Solo bodegas con dispensas activas: sin dispensas no hay indicador comparable.
-  const base = tabla.filter(t => (t.dispensas||0) > 0);
+  // En el Top 20 de mayor índice de pendientes se excluyen además las bodegas cuya zona
+  // corresponde a puntos cerrados (zona "CERRADAS"), de modo que el listado siga
+  // teniendo 20 bodegas operativas.
+  const esZonaCerrada = (z)=> normValue(z).indexOf('CERRAD') >= 0;
+  const base = tabla.filter(t => (t.dispensas||0) > 0 && (esEf || !esZonaCerrada(t.zona)));
   if(!base.length){ showToast('No hay bodegas con dispensas activas para el filtro actual.', true); return; }
 
-  const esEf = (modo === 'eficiencia');
   const orden = base.slice().sort((a,b)=>{
     const va = esEf ? (a.efDispensa||0) : (a.pendDispensa||0);
     const vb = esEf ? (b.efDispensa||0) : (b.pendDispensa||0);
@@ -4882,7 +4961,7 @@ function descargarImagenTopBodegasDispensa(modo){
   const titulo = esEf ? 'Top 20 bodegas detalle · Mejor indicador de eficiencia'
                       : 'Top 20 bodegas detalle · Mayor índice de pendientes';
   const criterio = esEf ? 'Ordenado por indicador de eficiencia, de mayor a menor.'
-                        : 'Ordenado por índice de pendientes, de mayor a menor.';
+                        : 'Ordenado por índice de pendientes, de mayor a menor. Se excluyen las bodegas de zonas cerradas.';
   const acento = esEf ? '#1E8F5E' : '#D98A2B';
 
   const tD=sumField(top,'dispensas'), tE=sumField(top,'dispensasEntregadas'), tP=sumField(top,'dispensasPendientes');
@@ -5583,6 +5662,7 @@ document.getElementById('btnDescargarSinHomologar').addEventListener('click', ()
     return r.moleculaPareto!=='PARETO' && r.moleculaPareto!=='NO PARETO';
   }).map(r=>({
     'Código Artículo': r.codigoArticulo,
+    'Descripción': String(r.descripcionReporte||r.descripcion||'').trim(),
     'Bodega Detalle': r.bodegaDetalle,
     'Documento': r.documento,
     'Cantidad Pendiente': Math.abs(r.diferencia)
