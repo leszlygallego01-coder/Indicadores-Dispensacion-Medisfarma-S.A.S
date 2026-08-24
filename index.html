@@ -992,7 +992,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;">
             <div style="flex:1;min-width:220px;">
               <h3>🏆 Top 10 códigos por cohorte</h3>
-              <p class="seg-desc">Selecciona una <b>cohorte</b> para ver sus 10 códigos más dispensados (por unidades). Puedes además enfocar una bodega puntual. La descarga en Excel respeta los filtros aplicados.</p>
+              <p class="seg-desc">Con <b>Todas las cohortes</b> ves los 10 códigos más dispensados del conjunto de las 6 cohortes (cada dispensa cuenta una sola vez); elige una cohorte concreta para ver su propio Top 10. Puedes además enfocar una bodega puntual. La descarga en Excel respeta los filtros aplicados.</p>
             </div>
             <div class="field" style="min-width:200px;">
               <label>Cohorte</label>
@@ -6161,6 +6161,7 @@ const COHORTE_LABEL=new Map(COHORTES_DEF.map(c=>[c.key,c.label]));
 let _cohortesResumen=[];
 let _cohortesTop=[];
 let _cohortesDetalle=[];
+let _cohortesGlobalCodigos=[];   // consolidado de todas las cohortes juntas (sin duplicar lineas)
 let _cohortesBodegas=[];
 
 function clasificarCohortesLinea(r){
@@ -6189,7 +6190,7 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
     if(diagEl){ diagEl.style.display=''; diagEl.innerHTML='<b>Sin datos.</b> Carga las tablas y pulsa <b>Calcular indicadores</b> para ver el informe de cohortes.'; }
     tb.innerHTML='<tr><td colspan="10" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
     tbTop.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
-    _cohortesResumen=[]; _cohortesTop=[]; _cohortesDetalle=[];
+    _cohortesResumen=[]; _cohortesTop=[]; _cohortesDetalle=[]; _cohortesGlobalCodigos=[];
     ['pieCohortes','pieCohortesPend'].forEach(id=>drawDonut(id, [{label:'',value:1,color:'#DCE4EC'}], '—'));
     ['pieCohortesLegend','pieCohortesPendLegend'].forEach(id=>{ const l=document.getElementById(id); if(l) l.innerHTML=''; });
     return;
@@ -6207,6 +6208,7 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
     pacientes:new Set(), lineas:0, ent:0, pen:0, unidades:0, codigos:new Set(), sinHomologar:new Set(), bodegas:new Set() }));
   const porBodega=new Map();      // para las donas (un renglon por bodega)
   const porCodigo=new Map();      // cohorte|bodega|codigo
+  const porCodigoGlobal=new Map(); // bodega|codigo  (una sola vez por linea, para "Todas las cohortes")
   let lineasClasificadas=0, sinDx=0;
 
   // Descripción a usar: la del catálogo de Homólogos y, si el código no está homologado,
@@ -6249,6 +6251,19 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
       if(r.documento) gc.pacientes.add(r.documento);
       if(!gc.descripcion) gc.descripcion=descLinea(r);
     });
+    // Consolidado global: la linea se cuenta UNA sola vez aunque pertenezca a varias cohortes.
+    const gk=bodega+'|'+(r.codigoArticulo||'SIN CODIGO');
+    if(!porCodigoGlobal.has(gk)) porCodigoGlobal.set(gk, { cohorte:'', bodega, zona:r.zona||'N/D',
+      codigo:r.codigoArticulo||'SIN CODIGO', descripcion:descLinea(r),
+      homologado:!sinHomologarLinea(r), cohortesSet:new Set(),
+      unidades:0, lineas:0, pendientes:0, pacientes:new Set() });
+    const gg=porCodigoGlobal.get(gk);
+    gg.unidades += (r.unidades||0);
+    gg.lineas++;
+    if(!entregada) gg.pendientes++;
+    if(r.documento) gg.pacientes.add(r.documento);
+    if(!gg.descripcion) gg.descripcion=descLinea(r);
+    cohortes.forEach(k=>gg.cohortesSet.add(k));
   });
 
   const tabla=[...resumen.values()].map(g=>({
@@ -6356,6 +6371,15 @@ function renderCohortes(rowsAllRaw, bodegaSearch, zona){
   _cohortesTop=top;
   _cohortesDetalle=todos.sort((a,b)=> a.cohorteLabel.localeCompare(b.cohorteLabel,'es') || a.bodega.localeCompare(b.bodega,'es') || b.unidades-a.unidades);
 
+  // Consolidado de las 6 cohortes juntas: cada linea cuenta una sola vez.
+  _cohortesGlobalCodigos=[...porCodigoGlobal.values()].map(g=>({
+    cohorte:'', cohorteLabel:'Todas las cohortes', bodega:g.bodega, zona:g.zona,
+    codigo:g.codigo, descripcion:g.descripcion, homologado:g.homologado!==false,
+    unidades:g.unidades, lineas:g.lineas, pendientes:g.pendientes,
+    pacientes:g.pacientes.size, pacientesSet:g.pacientes,
+    cohortes:[...g.cohortesSet].map(k=>COHORTE_LABEL.get(k)||k).sort((a,b)=>a.localeCompare(b,'es'))
+  }));
+
   // Selectores propios de esta vista
   const selC=document.getElementById('fCohorte');
   if(selC && selC.options.length<=1){
@@ -6381,10 +6405,6 @@ function pintarTopCohortes(){
     tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay datos calculados.</td></tr>';
     return;
   }
-  if(!coh){
-    tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">Selecciona una <b>cohorte</b> en el filtro para ver su Top 10 de códigos.</td></tr>';
-    return;
-  }
   const filas=cohortesTopFiltrado(coh, bod);
   if(!filas.length){
     tb.innerHTML='<tr><td colspan="6" class="txt" style="text-align:center;color:#9CA9B6;">No hay dispensas de cohortes para los filtros seleccionados.</td></tr>';
@@ -6400,10 +6420,16 @@ function pintarTopCohortes(){
   ).join('');
 }
 
+// Fuente de datos del Top 10: por cohorte concreta usa el detalle; sin cohorte usa el
+// consolidado global (cada linea cuenta una sola vez aunque pertenezca a varias cohortes).
+function cohortesFuente(coh){
+  return coh ? _cohortesDetalle : _cohortesGlobalCodigos;
+}
+
 // Agrupa el detalle por código según los filtros de cohorte y bodega, ordenado por unidades.
 function cohortesTopFiltrado(coh, bod){
   const acum=new Map();
-  _cohortesDetalle.forEach(r=>{
+  cohortesFuente(coh).forEach(r=>{
     if(coh && r.cohorte!==coh) return;
     if(bod && r.bodega!==bod) return;
     if(!acum.has(r.codigo)) acum.set(r.codigo, { codigo:r.codigo, descripcion:r.descripcion,
@@ -6452,9 +6478,9 @@ function cohortesTopFiltrado(coh, bod){
     if(!_cohortesDetalle.length){ showToast('Primero calcula los indicadores.', true); return; }
     const coh=(document.getElementById('fCohorte')||{}).value || '';
     const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
-    const filas=_cohortesDetalle
+    const filas=cohortesFuente(coh)
       .filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
-      .map(r=>({ 'Cohorte':r.cohorteLabel, 'Bodega':r.bodega, 'Codigo':r.codigo,
+      .map(r=>({ 'Cohorte':(r.cohortes&&r.cohortes.length? r.cohortes.join(' / ') : r.cohorteLabel), 'Bodega':r.bodega, 'Codigo':r.codigo,
         'Descripcion DCI':r.descripcion||'', 'Pendientes':r.pendientes }));
     if(!filas.length){ showToast('No hay filas para los filtros seleccionados.', true); return; }
     const wb2=XLSX.utils.book_new();
@@ -6469,9 +6495,9 @@ function cohortesTopFiltrado(coh, bod){
     if(!_cohortesDetalle.length){ showToast('Primero calcula los indicadores.', true); return; }
     const coh=(document.getElementById('fCohorte')||{}).value || '';
     const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
-    const filas=_cohortesDetalle
+    const filas=cohortesFuente(coh)
       .filter(r=>r.homologado===false && (!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
-      .map(r=>({ 'Cohorte':r.cohorteLabel, 'Bodega':r.bodega, 'Codigo':r.codigo,
+      .map(r=>({ 'Cohorte':(r.cohortes&&r.cohortes.length? r.cohortes.join(' / ') : r.cohorteLabel), 'Bodega':r.bodega, 'Codigo':r.codigo,
         'Descripcion (Reporte de Dispensacion)':r.descripcion||'',
         'Unidades':r.unidades, 'Lineas':r.lineas, 'Pendientes':r.pendientes }));
     if(!filas.length){ showToast('No hay códigos sin homologar para los filtros seleccionados.', true); return; }
