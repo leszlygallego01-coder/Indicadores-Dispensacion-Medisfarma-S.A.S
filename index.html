@@ -1117,17 +1117,17 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <button class="btn btn-export" id="btnPeriodicoEventoSinSop" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas de evento sin soporte (Excel)</button>
     </div>
     <div id="periodicoDescargasOk" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">
-      <div class="field" style="display:flex;flex-direction:column;gap:4px;min-width:260px;">
-        <label style="font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;">Descarga de cumplidas</label>
+      <div class="field" style="display:flex;flex-direction:column;gap:4px;min-width:300px;">
+        <label style="font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;">Descarga de recuperadas en los cortes</label>
         <select id="pfEntregadasTipo" style="padding:7px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;">
-          <option value="docs">Dispensas entregadas</option>
-          <option value="lineas">Líneas entregadas</option>
-          <option value="soporte">Dispensas con soporte</option>
+          <option value="docs">Dispensas entregadas (antes pendientes)</option>
+          <option value="lineas">Líneas entregadas (antes pendientes)</option>
+          <option value="soporte">Dispensas de evento con soporte nuevo (antes sin soporte)</option>
         </select>
       </div>
       <button class="btn btn-export" id="btnPeriodicoEntregadas" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar en Excel</button>
     </div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:0;">Las descargas respetan los filtros de este modal y el corte global seleccionado en los filtros del tablero.</p>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0;">Las descargas respetan los filtros de este modal y el corte global seleccionado en los filtros del tablero. La descarga de recuperadas solo incluye lo que cambió de estado en los cortes (antes pendiente / sin soporte, ahora cumplido) e indica en qué corte se recuperó.</p>
     <div class="modal-tabs">
       <button class="result-tabs-btn periodico-tab-btn active" data-tab="documento">Indicador de Documento</button>
       <button class="result-tabs-btn periodico-tab-btn" data-tab="linea">Indicador por Línea</button>
@@ -7268,68 +7268,140 @@ document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()
   XLSX.writeFile(wb, 'Periodico_Evento_Sin_Soporte_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
   showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas de evento sin soporte ('+etqCorte+').');
 });
-/* 4) Descarga de lo CUMPLIDO al cierre del corte. El selector define qué se exporta:
-      - docs    : dispensas (documentos) totalmente entregadas
-      - lineas  : líneas entregadas (sin cantidad pendiente)
-      - soporte : dispensas que ya cuentan con soporte cargado                */
+/* 4) Descarga de lo RECUPERADO durante los cortes. No exporta todo lo que llega
+      cumplido en los cargues: solo lo que CAMBIÓ de estado frente a la línea base
+      (primer cargue de cada línea) y quedó cumplido al cierre del corte.
+      - docs    : dispensas que estaban pendientes y ya quedaron entregadas
+      - lineas  : líneas que estaban pendientes y ya quedaron entregadas
+      - soporte : dispensas de evento que no tenían soporte y ya lo tienen        */
 document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>{
   const ctx=periodicoContextoExport(); if(!ctx) return;
-  const {filtered, estado, corteFinal, etqCorte} = ctx;
+  const {filtered, corteFinal, etqCorte} = ctx;
   const tipo=(document.getElementById('pfEntregadasTipo')||{}).value || 'docs';
+  if(corteFinal===0){
+    showToast('Aún no hay cargues en los cortes: no hay recuperaciones que descargar.', true); return;
+  }
+  // Estado de cada corte (0 = línea base). Se indexa por la identidad de la línea,
+  // porque en cada corte la línea puede venir de una versión distinta del cargue.
+  const estadoDe = (c)=>{
+    const e=calcularEstadoHastaCorte(filtered, c);
+    const lp=new Map(), byKey=new Map();
+    e.snap.forEach(r=>{
+      const k=claveLineaCargue(r);
+      lp.set(k, e.lineaPend.get(r.idx)==='SI' ? 'SI':'NO');
+      byKey.set(k, r);
+    });
+    return {lp, byKey, docPend:e.docPend, snap:e.snap};
+  };
+  const estados=[]; for(let c=0;c<=corteFinal;c++) estados.push(estadoDe(c));
+  const base=estados[0], fin=estados[corteFinal];
+  const etqRec = c => 'corte '+c;
   let filas=[], hoja='', archivo='', etqMsg='';
 
   if(tipo==='lineas'){
-    hoja='Líneas entregadas'; archivo='Periodico_Lineas_Entregadas'; etqMsg='líneas entregadas';
-    filas=estado.snap.filter(r=>estado.lineaPend.get(r.idx)!=='SI')
-      .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
-      .map(r=>({
+    hoja='Líneas recuperadas'; archivo='Periodico_Lineas_Entregadas_Recuperadas';
+    etqMsg='líneas que pasaron de pendientes a entregadas';
+    const out=[];
+    fin.lp.forEach((est,k)=>{
+      if(est!=='NO') return;                       // hoy sigue pendiente
+      if(base.lp.get(k)!=='SI') return;            // nunca estuvo pendiente: no es recuperación
+      let corteRec=null;
+      for(let c=1;c<=corteFinal;c++){ if(estados[c].lp.get(k)==='NO'){ corteRec=c; break; } }
+      if(!corteRec) return;
+      const r=fin.byKey.get(k), rb=base.byKey.get(k);
+      if(!r) return;
+      out.push({r, rb, corteRec});
+    });
+    filas=out
+      .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.r.bodegaDetalle+a.r.documento).localeCompare(String(b.r.bodegaDetalle+b.r.documento),'es'))
+      .map(({r, rb, corteRec})=>({
         'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
         'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
         'Fecha Dispensación':periodicoFechaTxt(r.fecha),
         'Código Artículo':r.codigoArticulo,
         'Descripción':String(r.descripcionDci||'').trim() || String(r.descripcionReporte||'').trim(),
         'Molécula':r.moleculaPareto,
-        'Cantidad Autorizada':r.cantidadAutorizada, 'Unidades Entregadas':r.unidades,
-        'Diferencia':r.diferencia,
+        'Cantidad Autorizada':r.cantidadAutorizada,
+        'Cantidad pendiente inicial':rb?Math.abs(rb.diferencia||0):'',
+        'Unidades Entregadas':r.unidades, 'Diferencia':r.diferencia,
+        'Recuperada en':etqRec(corteRec),
+        'Fecha del cargue que la entregó':r.fechaCargue||'',
         'Soportes':r.tieneSoportes, 'Estado al':etqCorte
       }));
   } else if(tipo==='soporte'){
-    hoja='Dispensas con soporte'; archivo='Periodico_Dispensas_Con_Soporte'; etqMsg='dispensas con soporte';
-    const conSoporte=new Set(), info=new Map();
+    hoja='Soportes recuperados'; archivo='Periodico_Evento_Soporte_Recuperado';
+    etqMsg='dispensas de evento que pasaron de sin soporte a con soporte';
+    const sinSopBase=new Map(), conSopFin=new Map(), info=new Map();
     filtered.forEach(r=>{
-      if(!r.documento) return;
-      if(tieneSoporteHastaCorte(r, corteFinal)) conSoporte.add(r.documento);
+      if(r.contrato!=='EVENTO' || !r.documento) return;
       if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
+      if(tieneSoporteHastaCorte(r, 0)) sinSopBase.set(r.documento, false);
+      else if(!sinSopBase.has(r.documento)) sinSopBase.set(r.documento, true);
+      if(tieneSoporteHastaCorte(r, corteFinal)){
+        const c=corteRecuperacionSoporte(r);
+        const cc=(c && c>=1 && c<=corteFinal) ? c : 0;
+        const prev=conSopFin.get(r.documento);
+        if(prev===undefined || cc<prev) conSopFin.set(r.documento, cc);
+      }
     });
-    filas=[...info.values()].filter(r=>conSoporte.has(r.documento))
-      .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
-      .map(r=>({
+    const out=[];
+    conSopFin.forEach((corteRec, doc)=>{
+      if(sinSopBase.get(doc)!==true) return;      // ya tenía soporte desde el inicio
+      if(!corteRec) return;                      // sin corte de recuperación identificable
+      const r=info.get(doc); if(r) out.push({r, corteRec});
+    });
+    filas=out
+      .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.r.bodegaDetalle+a.r.documento).localeCompare(String(b.r.bodegaDetalle+b.r.documento),'es'))
+      .map(({r, corteRec})=>({
         'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
         'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
         'Fecha Dispensación':periodicoFechaTxt(r.fecha),
-        'Soportes':r.tieneSoportes, 'Fecha del cargue':r.fechaCargue||'',
-        'Estado al':etqCorte
+        'Soportes':r.tieneSoportes,
+        'Fecha del soporte':periodicoFechaTxt(r.fechaSoporte),
+        'Soporte cargado en':etqRec(corteRec),
+        'Fecha del cargue':r.fechaCargue||'', 'Estado al':etqCorte
       }));
   } else {
-    hoja='Dispensas entregadas'; archivo='Periodico_Dispensas_Entregadas'; etqMsg='dispensas entregadas';
+    hoja='Dispensas recuperadas'; archivo='Periodico_Dispensas_Entregadas_Recuperadas';
+    etqMsg='dispensas que pasaron de pendientes a entregadas';
+    // Detalle de cada dispensa recuperada (líneas y unidades al cierre del corte).
     const porDoc=new Map();
-    estado.snap.forEach(r=>{
+    fin.snap.forEach(r=>{
       if(!r.documento) return;
-      if(estado.docPend.get(r.documento)===true) return;   // sigue pendiente: no aplica
       if(!porDoc.has(r.documento)) porDoc.set(r.documento, {
         documento:r.documento, zona:r.zona, bodega:r.bodegaDetalle, eps:r.eps, epsGrupo:r.epsGrupo,
-        contrato:r.contrato, fecha:r.fecha, lineas:0, unidades:0, soporte:r.tieneSoportes
+        contrato:r.contrato, fecha:r.fecha, lineas:0, unidades:0, soporte:r.tieneSoportes, cargue:r.fechaCargue||''
       });
       const g=porDoc.get(r.documento);
       g.lineas++; g.unidades+=(Number(r.unidades)||0);
+      if(String(r.fechaCargue||'')>String(g.cargue)) g.cargue=r.fechaCargue||'';
     });
-    filas=[...porDoc.values()]
-      .sort((a,b)=>String(a.bodega+a.documento).localeCompare(String(b.bodega+b.documento),'es'))
-      .map(g=>({
+    // Líneas que estaban pendientes en la línea base, por documento.
+    const pendBase=new Map();
+    base.snap.forEach(r=>{
+      if(!r.documento) return;
+      if(base.lp.get(claveLineaCargue(r))==='SI') pendBase.set(r.documento,(pendBase.get(r.documento)||0)+1);
+    });
+    const out=[];
+    fin.docPend.forEach((pend, doc)=>{
+      if(pend!==false) return;                       // sigue pendiente
+      if(base.docPend.get(doc)!==true) return;       // ya estaba entregada desde el inicio
+      let corteRec=null;
+      for(let c=1;c<=corteFinal;c++){ if(estados[c].docPend.get(doc)===false){ corteRec=c; break; } }
+      if(!corteRec) return;
+      const g=porDoc.get(doc); if(g) out.push({g, corteRec});
+    });
+    filas=out
+      .sort((a,b)=>(a.corteRec-b.corteRec)||String(a.g.bodega+a.g.documento).localeCompare(String(b.g.bodega+b.g.documento),'es'))
+      .map(({g, corteRec})=>({
         'Zona':g.zona, 'Bodega Detalle':g.bodega, 'Documento':g.documento,
         'EPS':g.eps, 'EPS Consolidada':g.epsGrupo, 'Modalidad':g.contrato,
         'Fecha Dispensación':periodicoFechaTxt(g.fecha),
-        'Líneas de la dispensa':g.lineas, 'Unidades entregadas':g.unidades,
+        'Líneas de la dispensa':g.lineas,
+        'Líneas pendientes al inicio':pendBase.get(g.documento)||0,
+        'Unidades entregadas':g.unidades,
+        'Entregada en':etqRec(corteRec),
+        'Fecha del cargue que la entregó':g.cargue,
         'Soportes':g.soporte, 'Estado al':etqCorte
       }));
   }
