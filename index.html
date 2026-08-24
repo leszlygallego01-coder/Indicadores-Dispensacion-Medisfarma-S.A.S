@@ -317,6 +317,8 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
 #periodicoFilters .field{display:flex;flex-direction:column;gap:4px;}
 #periodicoFilters .field label{font-family:var(--disp);font-size:11.5px;color:var(--ink-soft);font-weight:600;}
 #periodicoFilters .field select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;}
+.prev-val{display:block;color:#9CA9B6;font-size:11px;font-weight:600;line-height:1.3;}
+.prev-val-inline{color:#9CA9B6;font-weight:600;}
 
 .subview{display:none;}
 .subview.active{display:block;}
@@ -1062,6 +1064,12 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
       <div class="field" style="flex:1;min-width:140px;"><label>Zona</label><select id="pfZona"><option value="">Todas</option></select></div>
       <div class="field" style="flex:1;min-width:180px;"><label>Bodega Detalle</label><select id="pfBodega"><option value="">Todas</option></select></div>
     </div>
+    <div id="periodicoDescargas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <button class="btn btn-export" id="btnPeriodicoDocsPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas no entregadas (Excel)</button>
+      <button class="btn btn-export" id="btnPeriodicoLineasPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Líneas pendientes (Excel)</button>
+      <button class="btn btn-export" id="btnPeriodicoEventoSinSop" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas de evento sin soporte (Excel)</button>
+    </div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:0;">Las descargas respetan los filtros de este modal y el corte global seleccionado en los filtros del tablero.</p>
     <div class="modal-tabs">
       <button class="result-tabs-btn periodico-tab-btn active" data-tab="documento">Indicador de Documento</button>
       <button class="result-tabs-btn periodico-tab-btn" data-tab="linea">Indicador por Línea</button>
@@ -6828,20 +6836,23 @@ function populatePeriodicoFilters(){
   document.getElementById(id).addEventListener('change', renderReportePeriodico);
 });
 
-function renderReportePeriodico(){
-  const allRows = state.processed.rows; // histórico completo del mes
-  // ---- aplicar filtros del modal ----
+// Filas del histórico que cumplen los filtros del modal periódico.
+function getPeriodicoFilteredRows(){
+  const allRows = (state.processed && state.processed.rows) || [];
   const fEG = document.getElementById('pfEpsGrupo').value;
   const fMod = document.getElementById('pfModalidad').value;
   const fZ = document.getElementById('pfZona').value;
   const fBod = document.getElementById('pfBodega').value;
-  const filtered = allRows.filter(r => {
+  return allRows.filter(r => {
     if(fEG && r.epsGrupo!==fEG) return false;
     if(fMod && r.contrato!==fMod) return false;
     if(fZ && r.zona!==fZ) return false;
     if(fBod && r.bodegaDetalle!==fBod) return false;
     return true;
   });
+}
+function renderReportePeriodico(){
+  const filtered = getPeriodicoFilteredRows();
   const metrics = buildCorteMetrics(filtered);
   // Cortes con cargue real: los demás quedan en cero (“—”) y no repiten cifras.
   const cortesActivos = cortesConCargue(filtered);
@@ -6880,10 +6891,15 @@ function renderReportePeriodico(){
   // ---- una sola tabla con los 3 cortes ----
   // Las columnas “totales” muestran el último estado con cargue real (no el corte 3 vacío).
   const corteFinal = corteVigenteHasta(cortesActivos, corteGlobalRP);
+  // Corte anterior con cargue real: sirve para mostrar el valor previo (en gris) al lado del actual.
+  const cortePrevio = corteFinal>0 ? corteVigenteHasta(cortesActivos, corteFinal-1) : null;
+  const etqPrevio = cortePrevio===null ? '' : (cortePrevio===0 ? 'primer cargue (línea base)' : 'corte '+cortePrevio);
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
   const filas=bodegas.map(bodega=>{
     const total=valT(corteFinal,bodega);
     const entFinal=valA(corteFinal,bodega), pendFinal=valB(corteFinal,bodega);
+    const entPrev=cortePrevio===null?null:valA(cortePrevio,bodega);
+    const pendPrev=cortePrevio===null?null:valB(cortePrevio,bodega);
     const base={ent:valA(0,bodega), pend:valB(0,bodega)};
     const cortes=[1,2,3].map(c=>activo(c)
       ? {ent:valA(c,bodega), pend:valB(c,bodega), sin:false, fuera:false}
@@ -6895,7 +6911,7 @@ function renderReportePeriodico(){
       return Math.max(0, valB(prev,bodega)-valB(c,bodega));
     });
     const recTotal=rec.reduce((a,b)=>a+b,0);
-    return {bodega, total, entFinal, pendFinal, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
+    return {bodega, total, entFinal, pendFinal, entPrev, pendPrev, base, cortes, rec, recTotal, indice: total? pendFinal/total : null};
   }).filter(f=>f.total||f.entFinal||f.pendFinal)
     .sort((a,b)=>{
       const ia=a.indice===null?-1:a.indice, ib=b.indice===null?-1:b.indice;
@@ -6904,13 +6920,19 @@ function renderReportePeriodico(){
       return String(a.bodega).localeCompare(String(b.bodega),'es');
     });
 
-  const tot={total:0, ent:0, pend:0, c:[{ent:0,pend:0},{ent:0,pend:0},{ent:0,pend:0}], rec:[0,0,0], recTotal:0};
+  const tot={total:0, ent:0, pend:0, entPrev:0, pendPrev:0, c:[{ent:0,pend:0},{ent:0,pend:0},{ent:0,pend:0}], rec:[0,0,0], recTotal:0};
   let totBaseEnt=0, totBasePend=0;
   filas.forEach(f=>{ totBaseEnt+=f.base.ent; totBasePend+=f.base.pend; });
   filas.forEach(f=>{
     tot.total+=f.total; tot.ent+=f.entFinal; tot.pend+=f.pendFinal; tot.recTotal+=f.recTotal;
+    tot.entPrev+=(f.entPrev||0); tot.pendPrev+=(f.pendPrev||0);
     [0,1,2].forEach(i=>{ tot.c[i].ent+=f.cortes[i].ent; tot.c[i].pend+=f.cortes[i].pend; tot.rec[i]+=f.rec[i]; });
   });
+  // Celda con el valor actual y, debajo en gris, el valor del corte anterior con cargue.
+  const celdaAntPrev = (actual, previo) => '<td>'+fmtInt(actual)
+    + (previo===null || previo===undefined ? ''
+       : '<span class="prev-val" title="Valor en el '+etqPrevio+'">Ant.: '+fmtInt(previo)+'</span>')
+    + '</td>';
 
   const dim='style="color:#9CA9B6;"';
   const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
@@ -6933,8 +6955,8 @@ function renderReportePeriodico(){
     const cortesMk = filasMk[fi];
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
-      +'<td>'+fmtInt(f.entFinal)+'</td>'
-      +'<td>'+fmtInt(f.pendFinal)+'</td>'
+      +celdaAntPrev(f.entFinal, f.entPrev)
+      +celdaAntPrev(f.pendFinal, f.pendPrev)
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
       if(cortesMk[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
@@ -6946,7 +6968,9 @@ function renderReportePeriodico(){
     return '<tr>'+tds+'</tr>';
   }).join('');
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
-    +'<td>'+fmtInt(tot.total)+'</td><td>'+fmtInt(tot.ent)+'</td><td>'+fmtInt(tot.pend)+'</td>'
+    +'<td>'+fmtInt(tot.total)+'</td>'
+    +celdaAntPrev(tot.ent, cortePrevio===null?null:tot.entPrev)
+    +celdaAntPrev(tot.pend, cortePrevio===null?null:tot.pendPrev)
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
   const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})), {ent:totBaseEnt, pend:totBasePend});
   [0,1,2].forEach(i=>{
@@ -6962,7 +6986,10 @@ function renderReportePeriodico(){
     : (activo(c) && !rpCambio[c-1])
       ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin cambios</span></th>'
       : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
-  let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th><th rowspan="2">'+labelEnt+' totales</th><th rowspan="2">'+labelPend+' totales</th><th rowspan="2">Índice de Pendientes</th>'
+  let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th>'
+    +'<th rowspan="2">'+labelEnt+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior</span></th>'
+    +'<th rowspan="2">'+labelPend+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior</span></th>'
+    +'<th rowspan="2">Índice de Pendientes</th>'
     +etiqCorte(1,'Corte 1 (1-10)')
     +etiqCorte(2,'Corte 2 (11-20)')
     +etiqCorte(3,'Corte 3 (21-31)')
@@ -7008,6 +7035,7 @@ function renderReportePeriodico(){
     }
     const a=accA[corte], b=accB[corte];
     const cPrev=corteVigenteHasta(cortesActivos, corte-1);
+    const aPrev=accA[cPrev], bPrev=accB[cPrev];
     const dA=a-accA[cPrev], dB=b-accB[cPrev];
     const sinCambio = dA===0 && dB===0;
     const refPrev = cPrev===0 ? 'al primer cargue (línea base)' : 'al corte '+cPrev;
@@ -7018,8 +7046,8 @@ function renderReportePeriodico(){
       +'<h4>'+cortesLabels[corte]+'</h4>'
       +'<svg width="150" height="150" viewBox="0 0 200 200" id="periodicoDonut'+corte+'"></svg>'
       +'<div class="legend" style="margin:10px 0 8px;">'
-      +'<div class="item"><span class="sw" style="background:#1E8F5E;"></span>'+labelEnt+'<span class="val">'+fmtInt(a)+'</span></div>'
-      +'<div class="item"><span class="sw" style="background:#D98A2B;"></span>'+labelPend+'<span class="val">'+fmtInt(b)+'</span></div>'
+      +'<div class="item"><span class="sw" style="background:#1E8F5E;"></span>'+labelEnt+' totales<span class="val">'+fmtInt(a)+' <span class="prev-val-inline" title="Valor '+refPrev+'">('+fmtInt(aPrev)+')</span></span></div>'
+      +'<div class="item"><span class="sw" style="background:#D98A2B;"></span>'+labelPend+' totales<span class="val">'+fmtInt(b)+' <span class="prev-val-inline" title="Valor '+refPrev+'">('+fmtInt(bPrev)+')</span></span></div>'
       +'<div class="item"><span class="sw" style="background:#063C6B;"></span>'+labelRec+' en el corte<span class="val">'+fmtInt(tot.rec[corte-1])+'</span></div>'
       +'</div>'
       +'<p style="margin:0;font-size:11.5px;line-height:1.45;color:'+(sinCambio?'#9CA9B6':'var(--ink-soft)')+';">'+nota+'</p>'
@@ -7047,6 +7075,107 @@ function renderReportePeriodico(){
     drawDonut('periodicoDonut'+corte, [{label:'',value:a,color:'#1E8F5E'},{label:'',value:b,color:'#D98A2B'}], fmtPct(a+b?a/(a+b):null));
   });
 }
+
+/* ---- Descargas Excel del Reporte Comparativo Periódico -------------------
+   Respetan los filtros del modal y el corte global del tablero: se toma el
+   estado ACUMULADO al cierre del último corte con cargue incluido.          */
+function periodicoContextoExport(){
+  if(!state.processed || !state.processed.rows || !state.processed.rows.length){
+    showToast('Primero calcula los indicadores.', true); return null;
+  }
+  const filtered = getPeriodicoFilteredRows();
+  if(!filtered.length){ showToast('No hay datos para los filtros seleccionados.', true); return null; }
+  const corteGlobal = getCorteGlobal();
+  const corteFinal = corteVigenteHasta(cortesConCargue(filtered), corteGlobal);
+  const estado = calcularEstadoHastaCorte(filtered, corteFinal);
+  const etqCorte = corteFinal===0 ? 'linea base' : 'corte '+corteFinal;
+  return {filtered, corteFinal, corteGlobal, estado, etqCorte};
+}
+function periodicoFechaTxt(f){
+  const d = f instanceof Date ? f : (f ? new Date(f) : null);
+  return (d && !isNaN(d)) ? d.toISOString().slice(0,10) : '';
+}
+// 1) Dispensas (documentos) que siguen NO entregadas al cierre del corte.
+document.getElementById('btnPeriodicoDocsPend').addEventListener('click', ()=>{
+  const ctx=periodicoContextoExport(); if(!ctx) return;
+  const {estado, corteFinal, etqCorte} = ctx;
+  const porDoc=new Map();
+  estado.snap.forEach(r=>{
+    if(!r.documento) return;
+    if(estado.docPend.get(r.documento)!==true) return;
+    if(!porDoc.has(r.documento)) porDoc.set(r.documento, {
+      documento:r.documento, zona:r.zona, bodega:r.bodegaDetalle, eps:r.eps, epsGrupo:r.epsGrupo,
+      contrato:r.contrato, fecha:r.fecha, lineas:0, pend:0, unidadesPend:0, soporte:r.tieneSoportes
+    });
+    const g=porDoc.get(r.documento);
+    g.lineas++;
+    if(estado.lineaPend.get(r.idx)==='SI'){ g.pend++; g.unidadesPend+=Math.abs(r.diferencia||0); }
+  });
+  const filas=[...porDoc.values()]
+    .sort((a,b)=>(b.pend-a.pend)||String(a.bodega).localeCompare(String(b.bodega),'es'))
+    .map(g=>({
+      'Zona':g.zona, 'Bodega Detalle':g.bodega, 'Documento':g.documento,
+      'EPS':g.eps, 'EPS Consolidada':g.epsGrupo, 'Modalidad':g.contrato,
+      'Fecha Dispensación':periodicoFechaTxt(g.fecha),
+      'Líneas de la dispensa':g.lineas, 'Líneas pendientes':g.pend,
+      'Unidades pendientes':g.unidadesPend, 'Soportes':g.soporte,
+      'Estado al':etqCorte
+    }));
+  if(!filas.length){ showToast('No hay dispensas no entregadas con los filtros y el corte actuales.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Dispensas no entregadas');
+  XLSX.writeFile(wb, 'Periodico_Dispensas_No_Entregadas_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas no entregadas ('+etqCorte+').');
+});
+// 2) Líneas pendientes al cierre del corte.
+document.getElementById('btnPeriodicoLineasPend').addEventListener('click', ()=>{
+  const ctx=periodicoContextoExport(); if(!ctx) return;
+  const {estado, corteFinal, etqCorte} = ctx;
+  const filas=estado.snap.filter(r=>estado.lineaPend.get(r.idx)==='SI')
+    .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
+    .map(r=>({
+      'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
+      'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
+      'Fecha Dispensación':periodicoFechaTxt(r.fecha),
+      'Código Artículo':r.codigoArticulo,
+      'Descripción':String(r.descripcionDci||'').trim() || String(r.descripcionReporte||'').trim(),
+      'Molécula':r.moleculaPareto,
+      'Cantidad Autorizada':r.cantidadAutorizada, 'Unidades Entregadas':r.unidades,
+      'Diferencia':r.diferencia, 'Cantidad Pendiente':Math.abs(r.diferencia||0),
+      'Existencia en el Punto':r.existenciaPunto, 'Existencia Bodega Principal':r.existenciaBodega,
+      'Soportes':r.tieneSoportes, 'Estado al':etqCorte
+    }));
+  if(!filas.length){ showToast('No hay líneas pendientes con los filtros y el corte actuales.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Líneas pendientes');
+  XLSX.writeFile(wb, 'Periodico_Lineas_Pendientes_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('Excel exportado: '+fmtInt(filas.length)+' líneas pendientes ('+etqCorte+').');
+});
+// 3) Dispensas de EVENTO que al cierre del corte siguen sin soporte.
+document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()=>{
+  const ctx=periodicoContextoExport(); if(!ctx) return;
+  const {filtered, corteFinal, etqCorte} = ctx;
+  const conSoporte=new Set(), info=new Map();
+  filtered.forEach(r=>{
+    if(r.contrato!=='EVENTO' || !r.documento) return;
+    if(tieneSoporteHastaCorte(r, corteFinal)) conSoporte.add(r.documento);
+    if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
+  });
+  const filas=[...info.values()].filter(r=>!conSoporte.has(r.documento))
+    .sort((a,b)=>String(a.bodegaDetalle+a.documento).localeCompare(String(b.bodegaDetalle+b.documento),'es'))
+    .map(r=>({
+      'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
+      'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
+      'Fecha Dispensación':periodicoFechaTxt(r.fecha),
+      'Soportes':r.tieneSoportes, 'Fecha del cargue':r.fechaCargue||'',
+      'Estado al':etqCorte
+    }));
+  if(!filas.length){ showToast('No hay dispensas de evento sin soporte con los filtros y el corte actuales.', true); return; }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Evento sin soporte');
+  XLSX.writeFile(wb, 'Periodico_Evento_Sin_Soporte_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas de evento sin soporte ('+etqCorte+').');
+});
 
 /* =========================================================================
    15. Init
