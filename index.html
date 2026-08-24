@@ -992,7 +992,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end;">
             <div style="flex:1;min-width:220px;">
               <h3>🏆 Top 10 códigos por cohorte</h3>
-              <p class="seg-desc">Con <b>Todas las cohortes</b> ves los 10 códigos más dispensados del conjunto de las 6 cohortes (cada dispensa cuenta una sola vez); elige una cohorte concreta para ver su propio Top 10. Puedes además enfocar una bodega puntual. La descarga en Excel respeta los filtros aplicados.</p>
+              <p class="seg-desc">Con <b>Todas las cohortes</b> ves los 10 códigos más dispensados del conjunto de las 6 cohortes (cada dispensa cuenta una sola vez); elige una cohorte concreta para ver su propio Top 10. Puedes además enfocar una bodega puntual. La descarga de códigos incluye únicamente los que tienen <b>pendientes mayores a 0</b>, respetando los filtros aplicados.</p>
             </div>
             <div class="field" style="min-width:200px;">
               <label>Cohorte</label>
@@ -1002,7 +1002,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <label>Bodega</label>
               <select id="fCohorteBodega"><option value="">Todas las bodegas</option></select>
             </div>
-            <button class="btn btn-export" id="btnExportCohortesTop">⬇ Descargar códigos (Excel)</button>
+            <button class="btn btn-export" id="btnExportCohortesTop">⬇ Descargar códigos con pendientes (Excel)</button>
             <button class="btn btn-export" id="btnExportCohortesSinHom">⬇ Descargar códigos sin homologar (Excel)</button>
           </div>
           <div class="table-wrap" style="max-height:560px;">
@@ -6423,7 +6423,8 @@ function pintarTopCohortes(){
 // Fuente de datos del Top 10: por cohorte concreta usa el detalle; sin cohorte usa el
 // consolidado global (cada linea cuenta una sola vez aunque pertenezca a varias cohortes).
 function cohortesFuente(coh){
-  return coh ? _cohortesDetalle : _cohortesGlobalCodigos;
+  if(coh) return _cohortesDetalle;
+  return _cohortesGlobalCodigos.length ? _cohortesGlobalCodigos : _cohortesDetalle;
 }
 
 // Agrupa el detalle por código según los filtros de cohorte y bodega, ordenado por unidades.
@@ -6479,14 +6480,15 @@ function cohortesTopFiltrado(coh, bod){
     const coh=(document.getElementById('fCohorte')||{}).value || '';
     const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
     const filas=cohortesFuente(coh)
-      .filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
+      .filter(r=>(r.pendientes||0)>0 && (!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
+      .sort((a,b)=> (b.pendientes||0)-(a.pendientes||0) || a.codigo.localeCompare(b.codigo,'es'))
       .map(r=>({ 'Cohorte':(r.cohortes&&r.cohortes.length? r.cohortes.join(' / ') : r.cohorteLabel), 'Bodega':r.bodega, 'Codigo':r.codigo,
         'Descripcion DCI':r.descripcion||'', 'Pendientes':r.pendientes }));
-    if(!filas.length){ showToast('No hay filas para los filtros seleccionados.', true); return; }
+    if(!filas.length){ showToast('No hay códigos con pendientes para los filtros seleccionados.', true); return; }
     const wb2=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(filas), 'CODIGOS COHORTE');
-    XLSX.writeFile(wb2, 'Codigos_Cohortes_'+new Date().toISOString().slice(0,10)+'.xlsx');
-    showToast('Excel descargado: '+fmtInt(filas.length)+' filas.');
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(filas), 'CODIGOS CON PENDIENTES');
+    XLSX.writeFile(wb2, 'Codigos_Cohortes_Pendientes_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    showToast('Excel descargado: '+fmtInt(filas.length)+' códigos con pendientes.');
   });
 
   // Descarga solo de los códigos que NO estan en la tabla Homólogo, respetando los filtros.
