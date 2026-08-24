@@ -6732,18 +6732,25 @@ function esVersionPosterior(a, b){
   if(fa!==fb) return fa>fb;
   return a.idx>b.idx;
 }
-// Día (AAAA-MM-DD) del cargue en que llegó esta versión de la línea.
+// Día (AAAA-MM-DD) del cargue en que llegó esta versión de la línea (para mostrar).
 function diaCargue(r){ return String((r && r.fechaCargue) || '').slice(0,10); }
 // Día en que llegó el soporte de la dispensa (o el del cargue de esa versión).
 function diaSoporte(r){ return String((r && (r.fechaSoporte || r.fechaCargue)) || '').slice(0,10); }
-// REGLA DE FECHA para acreditar una entrega:
-// el pendiente y la entrega deben venir en FECHAS DISTINTAS. Si la misma línea
-// (dispensa + código + bodega detalle) aparece pendiente y entregada con la misma
-// fecha, es la información del mismo día y no hay entrega real que reconocer.
-function entregaEnFechaDistinta(rPend, rEnt){
-  const dEnt=diaCargue(rEnt);
-  if(!dEnt) return false;                 // la entrega no trae fecha: no se acredita
-  return dEnt!==diaCargue(rPend);
+// Marca completa (fecha + hora) del cargue: sirve para saber si dos registros vienen
+// del MISMO cargue o de cargues distintos, incluso si se subieron el mismo día.
+function marcaCargue(r){ return String((r && r.fechaCargue) || ''); }
+// Marca completa del soporte (o del cargue en que llegó esa versión).
+function marcaSoporte(r){ return String((r && (r.fechaSoporte || r.fechaCargue)) || ''); }
+// REGLA para acreditar una entrega:
+// la entrega debe llegar en un cargue POSTERIOR al del pendiente. Si el pendiente y la
+// entrega vienen del mismo cargue es la información de ese mismo momento y no hay
+// entrega real que reconocer; si el cargue es posterior (aunque sea el mismo día, en
+// otra hora) sí se trata de una recuperación.
+function entregaEnCarguePosterior(rPend, rEnt){
+  if(!rPend || !rEnt) return false;
+  const cEnt=marcaCargue(rEnt), cPend=marcaCargue(rPend);
+  if(cEnt && cPend) return cEnt>cPend;    // mismo cargue exacto => no se acredita
+  return esVersionPosterior(rEnt, rPend); // sin fecha de cargue: basta que sea versión posterior
 }
 // Cortes que REALMENTE recibieron un cargue del Reporte de Dispensación.
 // Un corte sin cargue no debe mostrar cifras (queda en cero / “—”) hasta que
@@ -6870,9 +6877,9 @@ function buildCorteMetrics(rows){
    Una recuperación exige:
    - que en la línea base (primer cargue de cada línea) estuviera pendiente / sin soporte,
    - que al cierre del corte final ya esté entregada / con soporte,
-   - y que el cumplimiento llegue en una FECHA DISTINTA a la del pendiente: si el
-     pendiente y la entrega vienen con la misma fecha es la información del mismo día
-     y no hay entrega real que reconocer.
+   - y que el cumplimiento llegue en un CARGUE POSTERIOR al del pendiente: si ambos
+     vienen del mismo cargue es la información de ese mismo momento y no hay entrega
+     real que reconocer.
    tipo: 'docs' (dispensas) | 'lineas' | 'soporte'. Devuelve una lista de items con
    `bodega` y `corteRec` para poder agrupar por bodega y por corte.                */
 function recuperadasEnCortes(filtered, corteFinal, tipo){
@@ -6896,37 +6903,38 @@ function recuperadasEnCortes(filtered, corteFinal, tipo){
     for(let c=1;c<=corteFinal;c++){
       if(estados[c].lp.get(k)!=='NO') continue;
       const rc=estados[c].byKey.get(k);
-      if(rc && entregaEnFechaDistinta(rb, rc)) return c;
+      if(rc && entregaEnCarguePosterior(rb, rc)) return c;
     }
     return null;
   };
 
   if(tipo==='soporte'){
-    const sinSopBase=new Map(), conSopFin=new Map(), info=new Map(), diaSinSop=new Map(), diaConSop=new Map();
+    const sinSopBase=new Map(), conSopFin=new Map(), info=new Map(), marcaSinSop=new Map(), marcaConSop=new Map();
     filtered.forEach(r=>{
       if(r.contrato!=='EVENTO' || !r.documento) return;
       if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
       if(tieneSoporteHastaCorte(r, 0)) sinSopBase.set(r.documento, false);
       else {
         if(!sinSopBase.has(r.documento)) sinSopBase.set(r.documento, true);
-        const d=diaCargue(r), prevD=diaSinSop.get(r.documento);
-        if(prevD===undefined || (d && d<prevD)) diaSinSop.set(r.documento, d);
+        const d=marcaCargue(r), prevD=marcaSinSop.get(r.documento);
+        if(prevD===undefined || (d && (!prevD || d<prevD))) marcaSinSop.set(r.documento, d);
       }
       if(tieneSoporteHastaCorte(r, corteFinal)){
         const c=corteRecuperacionSoporte(r);
         const cc=(c && c>=1 && c<=corteFinal) ? c : 0;
         const prev=conSopFin.get(r.documento);
-        if(prev===undefined || cc<prev){ conSopFin.set(r.documento, cc); diaConSop.set(r.documento, diaSoporte(r)); }
+        if(prev===undefined || cc<prev){ conSopFin.set(r.documento, cc); marcaConSop.set(r.documento, marcaSoporte(r)); }
       }
     });
     const out=[];
     conSopFin.forEach((corteRec, doc)=>{
       if(sinSopBase.get(doc)!==true) return;      // ya tenía soporte desde el inicio
       if(!corteRec) return;                      // sin corte de recuperación identificable
-      const dSop=diaConSop.get(doc)||'', dSin=diaSinSop.get(doc)||'';
-      if(!dSop || dSop===dSin) return;           // mismo día: el soporte no llegó después
+      const mSop=marcaConSop.get(doc)||'', mSin=marcaSinSop.get(doc)||'';
+      // Mismo cargue (o anterior) => el soporte no llegó después: no es recuperación.
+      if(mSop && mSin && !(mSop>mSin)) return;
       const r=info.get(doc);
-      if(r) out.push({bodega:r.bodegaDetalle, corteRec, r, dSop, dSin});
+      if(r) out.push({bodega:r.bodegaDetalle, corteRec, r, dSop:mSop.slice(0,10), dSin:mSin.slice(0,10)});
     });
     return out;
   }
@@ -7061,10 +7069,10 @@ function renderReportePeriodico(){
   const fieldTot = periodicoTabActual==='documento' ? 'docsTotal' : periodicoTabActual==='linea' ? 'lineasTotal' : 'eventoTotal';
   const labelRec = periodicoTabActual==='soporte' ? 'Soportes recuperados' : (periodicoTabActual==='documento' ? 'Dispensas recuperadas' : 'Líneas recuperadas');
   const explicaRec = periodicoTabActual==='soporte'
-    ? 'Recuperado = dispensas de EVENTO que venían con Soportes en 0 / “NO TIENE” y en un cargue posterior ya llegaron con soporte, <strong>siempre que el soporte tenga una fecha distinta a la del registro sin soporte</strong> (si es el mismo día se trata de la información de esa misma fecha, no de una recuperación).'
+    ? 'Recuperado = dispensas de EVENTO que venían con Soportes en 0 / “NO TIENE” y <strong>en un cargue posterior</strong> ya llegaron con soporte. Si el soporte viene en el mismo cargue que el registro sin soporte no se cuenta (es la información de ese mismo momento); si llega en un cargue posterior sí se acredita, aunque los dos cargues sean del mismo día.'
     : (periodicoTabActual==='documento'
-        ? 'Recuperado = dispensas que estaban pendientes y en un cargue posterior quedaron entregadas, <strong>siempre que la entrega tenga una fecha distinta a la del pendiente</strong> (si coinciden es el mismo día y no se cuenta).'
-        : 'Recuperado = líneas que estaban pendientes y en un cargue posterior quedaron entregadas, <strong>siempre que la entrega tenga una fecha distinta a la del pendiente</strong> (si coinciden es el mismo día y no se cuenta).');
+        ? 'Recuperado = dispensas que estaban pendientes y quedaron entregadas <strong>en un cargue posterior</strong>. No se cuenta si el pendiente y la entrega vienen del mismo cargue; sí se cuenta cuando la entrega llega en un cargue posterior, aunque sea del mismo día.'
+        : 'Recuperado = líneas que estaban pendientes y quedaron entregadas <strong>en un cargue posterior</strong>. No se cuenta si el pendiente y la entrega vienen del mismo cargue; sí se cuenta cuando la entrega llega en un cargue posterior, aunque sea del mismo día.');
   const explicaCoincide = ' Estas cifras usan exactamente el mismo cálculo que el botón de descarga, por lo que el número de la columna “'+labelRec+'” coincide con la cantidad de filas del Excel.';
 
   // ---- helpers de lectura de métricas ----
