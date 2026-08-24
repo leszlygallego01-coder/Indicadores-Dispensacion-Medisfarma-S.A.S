@@ -1003,6 +1003,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
               <select id="fCohorteBodega"><option value="">Todas las bodegas</option></select>
             </div>
             <button class="btn btn-export" id="btnExportCohortesTop">⬇ Descargar códigos (Excel)</button>
+            <button class="btn btn-export" id="btnExportCohortesSinHom">⬇ Descargar códigos sin homologar (Excel)</button>
           </div>
           <div class="table-wrap" style="max-height:560px;">
             <table class="data" id="tblCohortesTop">
@@ -6440,7 +6441,6 @@ function cohortesTopFiltrado(coh, bod){
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'RESUMEN COHORTES');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_cohortesTop.map(mapTop)), 'TOP 10 COHORTE Y BODEGA');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_cohortesDetalle.map(mapTop)), 'TODOS LOS CODIGOS');
     XLSX.writeFile(wb, 'Informe_Cohortes_'+fecha+'.xlsx');
     showToast('Excel exportado: '+fmtInt(_cohortesTop.length)+' filas en el Top 10 por cohorte y bodega.');
   });
@@ -6455,12 +6455,30 @@ function cohortesTopFiltrado(coh, bod){
     const filas=_cohortesDetalle
       .filter(r=>(!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
       .map(r=>({ 'Cohorte':r.cohorteLabel, 'Bodega':r.bodega, 'Codigo':r.codigo,
-        'Descripcion DCI':r.descripcion||'', 'Unidades':r.unidades }));
+        'Descripcion DCI':r.descripcion||'', 'Pendientes':r.pendientes }));
     if(!filas.length){ showToast('No hay filas para los filtros seleccionados.', true); return; }
     const wb2=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(filas), 'CODIGOS COHORTE');
     XLSX.writeFile(wb2, 'Codigos_Cohortes_'+new Date().toISOString().slice(0,10)+'.xlsx');
     showToast('Excel descargado: '+fmtInt(filas.length)+' filas.');
+  });
+
+  // Descarga solo de los códigos que NO estan en la tabla Homólogo, respetando los filtros.
+  const btnSH=document.getElementById('btnExportCohortesSinHom');
+  if(btnSH) btnSH.addEventListener('click', ()=>{
+    if(!_cohortesDetalle.length){ showToast('Primero calcula los indicadores.', true); return; }
+    const coh=(document.getElementById('fCohorte')||{}).value || '';
+    const bod=(document.getElementById('fCohorteBodega')||{}).value || '';
+    const filas=_cohortesDetalle
+      .filter(r=>r.homologado===false && (!coh || r.cohorte===coh) && (!bod || r.bodega===bod))
+      .map(r=>({ 'Cohorte':r.cohorteLabel, 'Bodega':r.bodega, 'Codigo':r.codigo,
+        'Descripcion (Reporte de Dispensacion)':r.descripcion||'',
+        'Unidades':r.unidades, 'Lineas':r.lineas, 'Pendientes':r.pendientes }));
+    if(!filas.length){ showToast('No hay códigos sin homologar para los filtros seleccionados.', true); return; }
+    const wb3=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb3, XLSX.utils.json_to_sheet(filas), 'CODIGOS SIN HOMOLOGAR');
+    XLSX.writeFile(wb3, 'Codigos_Cohortes_Sin_Homologar_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    showToast('Excel descargado: '+fmtInt(filas.length)+' códigos sin homologar.');
   });
 })();
 
