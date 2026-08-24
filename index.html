@@ -325,20 +325,20 @@ table.data thead th.sortable.sort-active{text-decoration:underline;text-underlin
    asi al desplazarse en horizontal por los cortes siempre se ve la referencia. */
 #tblPeriodico thead tr:first-child th:nth-child(1),#tblPeriodico tbody td:nth-child(1){width:150px;min-width:150px;max-width:150px;}
 #tblPeriodico thead tr:first-child th:nth-child(2),#tblPeriodico tbody td:nth-child(2){width:72px;min-width:72px;max-width:72px;}
-#tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico tbody td:nth-child(3){width:112px;min-width:112px;max-width:112px;}
-#tblPeriodico thead tr:first-child th:nth-child(4),#tblPeriodico tbody td:nth-child(4){width:112px;min-width:112px;max-width:112px;}
+#tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico tbody td:nth-child(3){width:140px;min-width:140px;max-width:140px;}
+#tblPeriodico thead tr:first-child th:nth-child(4),#tblPeriodico tbody td:nth-child(4){width:140px;min-width:140px;max-width:140px;}
 #tblPeriodico thead tr:first-child th:nth-child(1),#tblPeriodico thead tr:first-child th:nth-child(2),
 #tblPeriodico thead tr:first-child th:nth-child(3),#tblPeriodico thead tr:first-child th:nth-child(4){position:sticky;z-index:7;white-space:normal;}
 #tblPeriodico thead tr:first-child th:nth-child(1){left:0;}
 #tblPeriodico thead tr:first-child th:nth-child(2){left:150px;}
 #tblPeriodico thead tr:first-child th:nth-child(3){left:222px;}
-#tblPeriodico thead tr:first-child th:nth-child(4){left:334px;box-shadow:2px 0 0 rgba(255,255,255,0.22);}
+#tblPeriodico thead tr:first-child th:nth-child(4){left:362px;box-shadow:2px 0 0 rgba(255,255,255,0.22);}
 #tblPeriodico tbody td:nth-child(1),#tblPeriodico tbody td:nth-child(2),
 #tblPeriodico tbody td:nth-child(3),#tblPeriodico tbody td:nth-child(4){position:sticky;z-index:3;background:var(--white);}
 #tblPeriodico tbody td:nth-child(1){left:0;white-space:normal;word-break:break-word;overflow-wrap:break-word;line-height:1.35;}
 #tblPeriodico tbody td:nth-child(2){left:150px;}
 #tblPeriodico tbody td:nth-child(3){left:222px;}
-#tblPeriodico tbody td:nth-child(4){left:334px;box-shadow:2px 0 0 var(--line);}
+#tblPeriodico tbody td:nth-child(4){left:362px;box-shadow:2px 0 0 var(--line);}
 #tblPeriodico tbody tr:nth-child(even) td:nth-child(1),#tblPeriodico tbody tr:nth-child(even) td:nth-child(2),
 #tblPeriodico tbody tr:nth-child(even) td:nth-child(3),#tblPeriodico tbody tr:nth-child(even) td:nth-child(4){background:#F7FAFD;}
 #tblPeriodico tbody tr:hover td:nth-child(1),#tblPeriodico tbody tr:hover td:nth-child(2),
@@ -6917,9 +6917,27 @@ function renderReportePeriodico(){
   // ---- una sola tabla con los 3 cortes ----
   // Las columnas “totales” muestran el último estado con cargue real (no el corte 3 vacío).
   const corteFinal = corteVigenteHasta(cortesActivos, corteGlobalRP);
-  // Corte anterior con cargue real: sirve para mostrar el valor previo (en gris) al lado del actual.
-  const cortePrevio = corteFinal>0 ? corteVigenteHasta(cortesActivos, corteFinal-1) : null;
+  /* Referencia "Anterior": no basta con tomar el corte con cargue inmediatamente
+     anterior, porque si ese cargue no trajo cambios las dos cifras salen iguales y
+     parece que nunca hubo movimiento. Se busca hacia atrás el último estado que SÍ
+     es distinto al actual (incluida la línea base), así el comparativo muestra la
+     variación real. Si ningún estado anterior difiere, no hubo variación en el mes. */
+  const estadosPrevios = [0].concat([1,2,3].filter(c=>c<corteFinal && activo(c)));
+  let cortePrevio = null, previoEsUltimo = true;
+  if(corteFinal>0){
+    for(let i=estadosPrevios.length-1; i>=0; i--){
+      const c=estadosPrevios[i];
+      if(accA[c]!==accA[corteFinal] || accB[c]!==accB[corteFinal]){
+        cortePrevio=c; previoEsUltimo = (i===estadosPrevios.length-1); break;
+      }
+    }
+    if(cortePrevio===null) cortePrevio = estadosPrevios[estadosPrevios.length-1];
+  }
   const etqPrevio = cortePrevio===null ? '' : (cortePrevio===0 ? 'primer cargue (línea base)' : 'corte '+cortePrevio);
+  const notaPrevio = cortePrevio===null ? ''
+    : (previoEsUltimo
+        ? 'La columna <strong>Anterior</strong> corresponde al '+etqPrevio+'.'
+        : 'La columna <strong>Anterior</strong> corresponde al <strong>'+etqPrevio+'</strong>, que es el último estado con cifras distintas: los cargues intermedios no trajeron cambios, por eso se salta hasta ese punto para que sí se vea la variación real.');
   const bodegas=[...new Set([].concat(metrics[0],metrics[1],metrics[2],metrics[3]).map(t=>t.bodega))];
   const filas=bodegas.map(bodega=>{
     const total=valT(corteFinal,bodega);
@@ -6954,11 +6972,20 @@ function renderReportePeriodico(){
     tot.entPrev+=(f.entPrev||0); tot.pendPrev+=(f.pendPrev||0);
     [0,1,2].forEach(i=>{ tot.c[i].ent+=f.cortes[i].ent; tot.c[i].pend+=f.cortes[i].pend; tot.rec[i]+=f.rec[i]; });
   });
-  // Celda con el valor actual y, debajo en gris, el valor del corte anterior con cargue.
-  const celdaAntPrev = (actual, previo) => '<td>'+fmtInt(actual)
-    + (previo===null || previo===undefined ? ''
-       : '<span class="prev-val" title="Valor en el '+etqPrevio+'">Ant.: '+fmtInt(previo)+'</span>')
-    + '</td>';
+  /* Celda con el valor actual y, debajo en gris, el valor de referencia anterior más
+     la diferencia entre ambos, para que la variación quede explícita en la tabla. */
+  const celdaAntPrev = (actual, previo, mejorSiSube) => {
+    if(previo===null || previo===undefined) return '<td>'+fmtInt(actual)+'</td>';
+    const d = (actual||0)-(previo||0);
+    const bueno = mejorSiSube ? d>0 : d<0;
+    const color = d===0 ? '#9CA9B6' : (bueno ? '#1E8F5E' : '#C0392B');
+    const delta = d===0
+      ? '<span style="color:#9CA9B6;"> · sin cambio</span>'
+      : '<span style="color:'+color+';"> · '+(d>0?'+':'')+fmtInt(d)+'</span>';
+    return '<td>'+fmtInt(actual)
+      + '<span class="prev-val" title="Valor en el '+etqPrevio+' y diferencia frente al valor actual">Ant.: '+fmtInt(previo)+delta+'</span>'
+      + '</td>';
+  };
 
   const dim='style="color:#9CA9B6;"';
   const tdSinCargue='<td '+dim+' title="Corte sin cargue: aún no se ha subido Reporte de Dispensación en estas fechas">'+DASH+'</td>';
@@ -6981,8 +7008,8 @@ function renderReportePeriodico(){
     const cortesMk = filasMk[fi];
     let tds='<td class="txt">'+escHtml(f.bodega)+'</td>'
       +'<td>'+fmtInt(f.total)+'</td>'
-      +celdaAntPrev(f.entFinal, f.entPrev)
-      +celdaAntPrev(f.pendFinal, f.pendPrev)
+      +celdaAntPrev(f.entFinal, f.entPrev, true)
+      +celdaAntPrev(f.pendFinal, f.pendPrev, false)
       +'<td class="'+effClass(f.indice===null?null:1-f.indice)+'">'+fmtPct(f.indice)+'</td>';
     [0,1,2].forEach(i=>{
       if(cortesMk[i].fuera){ tds+=tdFueraRP+tdFueraRP; return; }
@@ -6995,8 +7022,8 @@ function renderReportePeriodico(){
   }).join('');
   let filaTotal='<tr class="total-row"><td class="txt">TOTAL</td>'
     +'<td>'+fmtInt(tot.total)+'</td>'
-    +celdaAntPrev(tot.ent, cortePrevio===null?null:tot.entPrev)
-    +celdaAntPrev(tot.pend, cortePrevio===null?null:tot.pendPrev)
+    +celdaAntPrev(tot.ent, cortePrevio===null?null:tot.entPrev, true)
+    +celdaAntPrev(tot.pend, cortePrevio===null?null:tot.pendPrev, false)
     +'<td>'+fmtPct(tot.total?tot.pend/tot.total:null)+'</td>';
   const totMk = marcaSinCambio([0,1,2].map(i=>({ent:tot.c[i].ent, pend:tot.c[i].pend, sin:!fuera(i+1)&&!activo(i+1), fuera:fuera(i+1)})), {ent:totBaseEnt, pend:totBasePend});
   [0,1,2].forEach(i=>{
@@ -7013,8 +7040,8 @@ function renderReportePeriodico(){
       ? '<th colspan="2" style="color:#9CA9B6;">'+txt+' <span style="font-weight:600;">· sin cambios</span></th>'
       : '<th colspan="2">'+txt+(activo(c)?'':' <span style="color:#9CA9B6;font-weight:600;">· sin cargue</span>')+'</th>';
   let ths1='<tr><th rowspan="2">Bodega</th><th rowspan="2">Total</th>'
-    +'<th rowspan="2">'+labelEnt+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior</span></th>'
-    +'<th rowspan="2">'+labelPend+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior</span></th>'
+    +'<th rowspan="2">'+labelEnt+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior (dif.)</span></th>'
+    +'<th rowspan="2">'+labelPend+' totales<br><span style="font-weight:600;color:#9CA9B6;font-size:10.5px;">Actual / Anterior (dif.)</span></th>'
     +'<th rowspan="2">Índice de Pendientes</th>'
     +etiqCorte(1,'Corte 1 (1-10)')
     +etiqCorte(2,'Corte 2 (11-20)')
@@ -7083,7 +7110,7 @@ function renderReportePeriodico(){
 
   html+='<div class="corte-card" style="margin-top:14px;">'
     +'<h4>Comparativo por bodega — acumulado en los 3 cortes</h4>'
-    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+explicaRec+'</p>'
+    +'<p style="margin:0 0 10px;color:var(--ink-soft);font-size:12px;line-height:1.5;">Cada corte muestra el estado ACUMULADO al cierre de ese corte, pero <strong>solo si en ese corte hubo un cargue del Reporte de Dispensación</strong>. Los cortes sin cargue quedan en cero (“—”) y no repiten las cifras del corte anterior: se llenan cuando se sube información nueva. Se respeta el <strong>corte global de los filtros (corte '+corteGlobalRP+')</strong>: los cortes posteriores aparecen como “fuera del corte”. Las columnas de totales corresponden al último corte con cargue incluido. Si una bodega <strong>no presentó cambios frente al corte anterior</strong>, ese corte se muestra como “—” en lugar de repetir las mismas cifras. '+notaPrevio+' '+explicaRec+'</p>'
     +'<div class="table-wrap" style="max-height:460px;">'
     +'<table class="data" id="tblPeriodico"><thead>'+ths1+ths2+'</thead>'
     +'<tbody>'+(cuerpo ? cuerpo+filaTotal : '<tr><td colspan="12" class="txt" style="text-align:center;color:#9CA9B6;">Sin datos para los filtros seleccionados</td></tr>')+'</tbody></table>'
