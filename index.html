@@ -1198,7 +1198,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
     <div id="periodicoDescargas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
       <button class="btn btn-export" id="btnPeriodicoDocsPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas no entregadas (Excel)</button>
       <button class="btn btn-export" id="btnPeriodicoLineasPend" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Líneas pendientes (Excel)</button>
-      <button class="btn btn-export" id="btnPeriodicoEventoSinSop" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas de evento sin soporte (Excel)</button>
+      <button class="btn btn-export" id="btnPeriodicoEventoSinSop" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Dispensas de evento entregadas sin soporte (Excel)</button>
     </div>
     <div id="periodicoDescargasOk" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">
       <div class="field" style="display:flex;flex-direction:column;gap:4px;min-width:300px;">
@@ -1206,7 +1206,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
         <select id="pfEntregadasTipo" style="padding:7px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:var(--white);color:var(--ink);cursor:pointer;">
           <option value="docs">Dispensas entregadas (antes pendientes)</option>
           <option value="lineas">Líneas entregadas (antes pendientes)</option>
-          <option value="soporte">Dispensas de evento con soporte nuevo (antes sin soporte)</option>
+          <option value="soporte">Dispensas de evento entregadas con soporte nuevo (antes sin soporte)</option>
         </select>
       </div>
       <button class="btn btn-export" id="btnPeriodicoEntregadas" style="padding:8px 14px;font-size:12.5px;background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar en Excel</button>
@@ -7195,6 +7195,29 @@ function snapshotUltimaVersion(rows){
   });
   return Array.from(porLinea.values());
 }
+/* Dispensas de EVENTO con TODAS sus líneas ENTREGADAS (según la última versión cargada
+   de cada línea). El Indicador Soporte Evento solo trabaja con estas dispensas: si una
+   dispensa de evento todavía tiene alguna línea pendiente NO entra al indicador de
+   soportes (ni como “con soporte” ni como “sin soporte”), porque el soporte se exige
+   cuando la entrega ya está completa.
+   La identidad es dispensa + punto de entrega (bodega + documento).             */
+function clavesEventoEntregadas(rows){
+  const est=new Map();
+  snapshotUltimaVersion(rows).forEach(r=>{
+    if(r.contrato!=='EVENTO' || !r.documento) return;
+    const k=r.bodegaDetalle+'|'+r.documento;
+    if(r.lineaPendiente==='SI') est.set(k, false);          // queda pendiente => se excluye
+    else if(!est.has(k)) est.set(k, true);
+  });
+  const out=new Set();
+  est.forEach((completa,k)=>{ if(completa) out.add(k); });
+  return out;
+}
+// Solo las filas de EVENTO cuyas dispensas están 100% entregadas.
+function filasSoporteEvento(rows){
+  const ok=clavesEventoEntregadas(rows);
+  return (rows||[]).filter(r=>r.contrato==='EVENTO' && r.documento && ok.has(r.bodegaDetalle+'|'+r.documento));
+}
 // Estado ACUMULADO de líneas y documentos al cierre del corte indicado.
 function calcularEstadoHastaCorte(rows, corteMax){
   const snap=snapshotHastaCorte(rows, corteMax);
@@ -7210,6 +7233,8 @@ function calcularEstadoHastaCorte(rows, corteMax){
 }
 function buildCorteMetrics(rows){
   const out={};
+  // Universo del Indicador Soporte Evento: solo dispensas de evento totalmente entregadas.
+  const eventoOk=clavesEventoEntregadas(rows);
   // El corte 0 es la foto inicial (primer cargue de cada línea): sirve de línea base
   // para medir qué se recuperó en cada corte posterior.
   [0,1,2,3].forEach(corte=>{
@@ -7232,11 +7257,12 @@ function buildCorteMetrics(rows){
       g.lineas++;
       if(lineaPend.get(r.idx)==='NO') g.lineasEnt++;
     });
-    // Soportes de EVENTO: el universo son TODAS las dispensas de evento del periodo
-    // (mismo total en los 3 cortes). “Con soporte” solo puede crecer: un soporte que
-    // llegó en un cargue suma en ese corte y ya no se pierde en los cortes siguientes.
+    // Soportes de EVENTO: el universo son las dispensas de evento con TODAS sus líneas
+    // ENTREGADAS (mismo total en los 3 cortes). “Con soporte” solo puede crecer: un
+    // soporte que llegó en un cargue suma en ese corte y ya no se pierde después.
     rows.forEach(r=>{
       if(r.contrato!=='EVENTO' || !r.documento) return;
+      if(!eventoOk.has(r.bodegaDetalle+'|'+r.documento)) return;   // aún con líneas pendientes
       const g=ensureG(r);
       g.eventoSet.add(r.documento);
       if(tieneSoporteHastaCorte(r, corte)) g.eventoConSet.add(r.documento);
@@ -7294,9 +7320,12 @@ function recuperadasEnCortes(filtered, corteFinal, tipo){
   };
 
   if(tipo==='soporte'){
+    // Solo cuentan los soportes cargados para dispensas de evento YA entregadas por completo.
+    const eventoOk=clavesEventoEntregadas(filtered);
     const sinSopBase=new Map(), conSopFin=new Map(), info=new Map(), marcaSinSop=new Map(), marcaConSop=new Map();
     filtered.forEach(r=>{
       if(r.contrato!=='EVENTO' || !r.documento) return;
+      if(!eventoOk.has(r.bodegaDetalle+'|'+r.documento)) return;   // aún con líneas pendientes
       if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
       if(tieneSoporteHastaCorte(r, 0)) sinSopBase.set(r.documento, false);
       else {
@@ -7439,11 +7468,15 @@ function getPeriodicoFilteredRows(){
 function renderReportePeriodico(){
   const filtered = getPeriodicoFilteredRows();
   const metrics = buildCorteMetrics(filtered);
+  /* En la pestaña “Indicador Soporte Evento” los cortes se miden únicamente con las filas
+     de dispensas de EVENTO que ya tienen TODAS sus líneas entregadas: un cargue que no
+     trajo información de esas dispensas no debe abrir corte con cifras. */
+  const baseCortes = periodicoTabActual==='soporte' ? filasSoporteEvento(filtered) : filtered;
   // Cortes con cargue real: los demás quedan en cero (“—”) y no repiten cifras.
-  const cortesActivos = cortesConCargue(filtered);
+  const cortesActivos = cortesConCargue(baseCortes);
   // Cargues por bodega: una bodega puede no tener movimiento en un corte que sí tuvo
   // cargue general; en ese caso sus celdas de ese corte quedan en “—”.
-  const cargueBodega = cortesConCarguePorBodega(filtered);
+  const cargueBodega = cortesConCarguePorBodega(baseCortes);
   // Corte global elegido en los filtros: los cortes posteriores no se tienen en cuenta.
   const corteGlobalRP = getCorteGlobal();
   const fuera = c => c > corteGlobalRP;
@@ -7458,7 +7491,7 @@ function renderReportePeriodico(){
   const fieldTot = periodicoTabActual==='documento' ? 'docsTotal' : periodicoTabActual==='linea' ? 'lineasTotal' : 'eventoTotal';
   const labelRec = periodicoTabActual==='soporte' ? 'Soportes recuperados' : (periodicoTabActual==='documento' ? 'Dispensas recuperadas' : 'Líneas recuperadas');
   const explicaRec = periodicoTabActual==='soporte'
-    ? 'Recuperado = dispensas de EVENTO que venían con Soportes en 0 / “NO TIENE” y <strong>en un cargue posterior</strong> ya llegaron con soporte. Si el soporte viene en el mismo cargue que el registro sin soporte no se cuenta (es la información de ese mismo momento); si llega en un cargue posterior sí se acredita, aunque los dos cargues sean del mismo día.'
+    ? 'Este indicador solo tiene en cuenta <strong>dispensas de EVENTO con todas sus líneas entregadas</strong> (con o sin soporte); las dispensas de evento que aún tienen líneas pendientes no entran. Recuperado = dispensas de EVENTO ya entregadas por completo que venían con Soportes en 0 / “NO TIENE” y <strong>en un cargue posterior</strong> ya llegaron con soporte, por lo que cada corte refleja únicamente el cargue de soportes de esas dispensas. Si el soporte viene en el mismo cargue que el registro sin soporte no se cuenta (es la información de ese mismo momento); si llega en un cargue posterior sí se acredita, aunque los dos cargues sean del mismo día.'
     : (periodicoTabActual==='documento'
         ? 'Recuperado = dispensas que estaban pendientes y quedaron entregadas <strong>en un cargue posterior</strong>. No se cuenta si el pendiente y la entrega vienen del mismo cargue; sí se cuenta cuando la entrega llega en un cargue posterior, aunque sea del mismo día.'
         : 'Recuperado = líneas que estaban pendientes y quedaron entregadas <strong>en un cargue posterior</strong>. No se cuenta si el pendiente y la entrega vienen del mismo cargue; sí se cuenta cuando la entrega llega en un cargue posterior, aunque sea del mismo día.');
@@ -7817,13 +7850,16 @@ document.getElementById('btnPeriodicoLineasPend').addEventListener('click', ()=>
   XLSX.writeFile(wb, 'Periodico_Lineas_Pendientes_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
   showToast('Excel exportado: '+fmtInt(filas.length)+' líneas pendientes ('+etqCorte+').');
 });
-// 3) Dispensas de EVENTO que al cierre del corte siguen sin soporte.
+// 3) Dispensas de EVENTO ya entregadas por completo que al cierre del corte siguen sin soporte.
 document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()=>{
   const ctx=periodicoContextoExport(); if(!ctx) return;
   const {filtered, corteFinal, etqCorte} = ctx;
+  // Mismo universo del indicador: solo dispensas de evento con TODAS sus líneas entregadas.
+  const eventoOk=clavesEventoEntregadas(filtered);
   const conSoporte=new Set(), info=new Map();
   filtered.forEach(r=>{
     if(r.contrato!=='EVENTO' || !r.documento) return;
+    if(!eventoOk.has(r.bodegaDetalle+'|'+r.documento)) return;
     if(tieneSoporteHastaCorte(r, corteFinal)) conSoporte.add(r.documento);
     if(!info.has(r.documento) || esVersionPosterior(r, info.get(r.documento))) info.set(r.documento, r);
   });
@@ -7833,14 +7869,15 @@ document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()
       'Zona':r.zona, 'Bodega Detalle':r.bodegaDetalle, 'Documento':r.documento,
       'EPS':r.eps, 'EPS Consolidada':r.epsGrupo, 'Modalidad':r.contrato,
       'Fecha Dispensación':periodicoFechaTxt(r.fecha),
+      'Entrega de la dispensa':'Todas las líneas entregadas',
       'Soportes':r.tieneSoportes, 'Fecha del cargue':r.fechaCargue||'',
       'Estado al':etqCorte
     }));
-  if(!filas.length){ showToast('No hay dispensas de evento sin soporte con los filtros y el corte actuales.', true); return; }
+  if(!filas.length){ showToast('No hay dispensas de evento entregadas y sin soporte con los filtros y el corte actuales.', true); return; }
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Evento sin soporte');
-  XLSX.writeFile(wb, 'Periodico_Evento_Sin_Soporte_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
-  showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas de evento sin soporte ('+etqCorte+').');
+  XLSX.writeFile(wb, 'Periodico_Evento_Entregadas_Sin_Soporte_corte'+corteFinal+'_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  showToast('Excel exportado: '+fmtInt(filas.length)+' dispensas de evento entregadas sin soporte ('+etqCorte+').');
 });
 /* 4) Descarga de lo RECUPERADO durante los cortes. No exporta todo lo que llega
       cumplido en los cargues: solo lo que CAMBIÓ de estado frente a la línea base
