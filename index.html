@@ -1188,7 +1188,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
   <div class="modal-box">
     <button class="modal-close" id="btnCerrarPeriodico">✕</button>
     <h2>Reporte Comparativo Periódico</h2>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:0;">Compara los cargues acumulativos del Reporte de Dispensación según su fecha de cargue, segmentada en 3 cortes del mes: días 1-10, 11-20 y 21-31. Cada corte muestra el estado ACUMULADO hasta ese día, tomando la última versión cargada de cada línea.</p>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0;">Compara los cargues acumulativos del Reporte de Dispensación según su fecha de cargue, segmentada en 3 cortes del mes: días 1-10, 11-20 y 21-31. Cada corte muestra el estado ACUMULADO hasta ese día, tomando la última versión cargada de cada línea. <b>Alcance:</b> se cuentan solo las dispensas con <b>Estado Activo</b>; las INACTIVO se excluyen.</p>
     <div id="periodicoFilters" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <div class="field" style="flex:1;min-width:140px;"><label>EPS Consolidada</label><select id="pfEpsGrupo"><option value="">Todas</option></select></div>
       <div class="field" style="flex:1;min-width:140px;"><label>Modalidad</label><select id="pfModalidad"><option value="">Todas</option></select></div>
@@ -7443,16 +7443,20 @@ function populatePeriodicoFilters(){
   selEG.innerHTML='<option value="">Todas</option>'+p.epsGrupos.map(c=>`<option value="${c}">${c}</option>`).join('');
   selM.innerHTML='<option value="">Todas</option>'+p.contratos.map(c=>`<option value="${c}">${c}</option>`).join('');
   selZ.innerHTML='<option value="">Todas</option>'+p.zonas.map(z=>`<option value="${z}">${z}</option>`).join('');
-  const bodegas=[...new Set(p.rows.map(r=>r.bodegaDetalle).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+  // Solo bodegas con dispensas activas: las INACTIVO no entran en este reporte.
+  const bodegas=[...new Set(soloActivas(p.rows).map(r=>r.bodegaDetalle).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
   selB.innerHTML='<option value="">Todas</option>'+bodegas.map(b=>`<option value="${b}">${b}</option>`).join('');
 }
 ['pfEpsGrupo','pfModalidad','pfZona','pfBodega'].forEach(id=>{
   document.getElementById(id).addEventListener('change', renderReportePeriodico);
 });
 
-// Filas del histórico que cumplen los filtros del modal periódico.
+/* Filas del histórico que cumplen los filtros del modal periódico.
+   Alcance: solo dispensas con Estado ACTIVO. Las marcadas como INACTIVO se excluyen,
+   igual que en los indicadores de la pantalla principal, para que las cifras del
+   Reporte Comparativo Periódico coincidan con el Indicador Soporte Evento.        */
 function getPeriodicoFilteredRows(){
-  const allRows = (state.processed && state.processed.rows) || [];
+  const allRows = soloActivas((state.processed && state.processed.rows) || []);
   const fEG = document.getElementById('pfEpsGrupo').value;
   const fMod = document.getElementById('pfModalidad').value;
   const fZ = document.getElementById('pfZona').value;
@@ -7777,15 +7781,19 @@ function renderReportePeriodico(){
 
 /* ---- Descargas Excel del Reporte Comparativo Periódico -------------------
    Respetan los filtros del modal y el corte global del tablero: se toma el
-   estado ACUMULADO al cierre del último corte con cargue incluido.          */
-function periodicoContextoExport(){
+   estado ACUMULADO al cierre del último corte con cargue incluido.
+   Para las descargas de soporte de EVENTO el último corte con cargue se mide solo
+   con las dispensas de evento totalmente entregadas, igual que la tabla del modal,
+   para que el corte del Excel sea el mismo que el de la pantalla.            */
+function periodicoContextoExport(soloSoporteEvento){
   if(!state.processed || !state.processed.rows || !state.processed.rows.length){
     showToast('Primero calcula los indicadores.', true); return null;
   }
   const filtered = getPeriodicoFilteredRows();
   if(!filtered.length){ showToast('No hay datos para los filtros seleccionados.', true); return null; }
   const corteGlobal = getCorteGlobal();
-  const corteFinal = corteVigenteHasta(cortesConCargue(filtered), corteGlobal);
+  const baseCortes = soloSoporteEvento ? filasSoporteEvento(filtered) : filtered;
+  const corteFinal = corteVigenteHasta(cortesConCargue(baseCortes), corteGlobal);
   const estado = calcularEstadoHastaCorte(filtered, corteFinal);
   const etqCorte = corteFinal===0 ? 'linea base' : 'corte '+corteFinal;
   return {filtered, corteFinal, corteGlobal, estado, etqCorte};
@@ -7852,7 +7860,7 @@ document.getElementById('btnPeriodicoLineasPend').addEventListener('click', ()=>
 });
 // 3) Dispensas de EVENTO ya entregadas por completo que al cierre del corte siguen sin soporte.
 document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()=>{
-  const ctx=periodicoContextoExport(); if(!ctx) return;
+  const ctx=periodicoContextoExport(true); if(!ctx) return;
   const {filtered, corteFinal, etqCorte} = ctx;
   // Mismo universo del indicador: solo dispensas de evento con TODAS sus líneas entregadas.
   const eventoOk=clavesEventoEntregadas(filtered);
@@ -7886,9 +7894,10 @@ document.getElementById('btnPeriodicoEventoSinSop').addEventListener('click', ()
       - lineas  : líneas que estaban pendientes y ya quedaron entregadas
       - soporte : dispensas de evento que no tenían soporte y ya lo tienen        */
 document.getElementById('btnPeriodicoEntregadas').addEventListener('click', ()=>{
-  const ctx=periodicoContextoExport(); if(!ctx) return;
-  const {filtered, corteFinal, etqCorte} = ctx;
   const tipo=(document.getElementById('pfEntregadasTipo')||{}).value || 'docs';
+  // Para soporte de EVENTO el corte se mide con las dispensas ya entregadas por completo.
+  const ctx=periodicoContextoExport(tipo==='soporte'); if(!ctx) return;
+  const {filtered, corteFinal, etqCorte} = ctx;
   if(corteFinal===0){
     showToast('Aún no hay cargues en los cortes: no hay recuperaciones que descargar.', true); return;
   }
