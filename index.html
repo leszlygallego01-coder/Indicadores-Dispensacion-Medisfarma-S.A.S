@@ -711,7 +711,7 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
         <div class="chart-row" style="grid-template-columns:1fr 1.4fr 1fr;">
           <div class="chart-card">
-            <h4>% Eficiencia vs % Pendiente de líneas</h4>
+            <h4>% Líneas entregadas vs % Líneas pendientes</h4>
             <select id="pieLineasGeneralSelect"></select>
             <svg id="pieLineasGeneral" width="200" height="200" viewBox="0 0 200 200"></svg>
             <div class="legend" id="pieLineasGeneralLegend"></div>
@@ -5430,6 +5430,11 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
     const efFinalNoPareto = (efPuntoNoPareto||0)+(efBodegaNoPareto||0);
     const pctComprasNoPareto = molNoParetoPend ? Math.max(0, 1-efFinalNoPareto) : null;
     return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen, sinHomologar, pendAgotadas,
+      // Porcentajes de entregas y pendientes de la propia bodega: se guardan en la fila para
+      // que la dona pueda mostrarlos al seleccionar una bodega puntual (antes solo existian
+      // en el agregado general y la dona quedaba en 0,0%).
+      efLineas: lineas ? lineasEnt/lineas : null,
+      pendLineas: lineas ? lineasPen/lineas : null,
       molParetoPend, paretoAgotado, molNoParetoPend, noParetoAgotado, totalAgotadas, pctCierre,
       cantPuntoPareto, cantBodegaPareto, efPuntoPareto, efBodegaPareto, efFinalPareto, pctComprasPareto,
       cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto };
@@ -5461,19 +5466,37 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
     <div class="stat"><div class="label">No Pareto pendientes</div><div class="value">${fmtInt(totalNoPareto)}</div><div class="sub">${alcanceLinea}</div></div>
   `;
 
-  // ---- gráfico de pastel: % Eficiencia de Líneas Entregadas vs % Índice de Líneas Pendientes ----
+  // ---- dona: % de líneas ENTREGADAS vs % de líneas PENDIENTES ----
+  // Funciona tanto en "Todas las bodegas (general)" como al elegir una bodega puntual:
+  // en ambos casos los dos porcentajes se calculan sobre el total de líneas de ese alcance
+  // y siempre suman 100%.
   function aggregateLineasGeneral(tbl){
     const s=(f)=>sumField(tbl,f);
     const tL=s('lineas'), tE=s('lineasEnt'), tP=s('lineasPen');
-    return { bodega:'__ALL__', efLineas: tL? tE/tL: null, pendLineas: tL? tP/tL: null };
+    return { bodega:'__ALL__', lineas:tL, lineasEnt:tE, lineasPen:tP,
+      efLineas: tL? tE/tL: null, pendLineas: tL? tP/tL: null };
   }
-  setupGenericPieSelector('pieLineasGeneralSelect','pieLineasGeneral','pieLineasGeneralLegend', table, aggregateLineasGeneral, row=>[
-    {label:'% Eficiencia (entregadas)', value: row.efLineas||0, color:'#1E8F5E'},
-    {label:'% Índice pendiente', value: row.pendLineas||0, color:'#D98A2B'}
-  ], {
+  setupGenericPieSelector('pieLineasGeneralSelect','pieLineasGeneral','pieLineasGeneralLegend', table, aggregateLineasGeneral, row=>{
+    const tot=row.lineas||0;
+    const ent=row.lineasEnt||0, pen=row.lineasPen||0;
+    // Si la fila trae los conteos se recalcula el porcentaje aquí mismo, para que la dona
+    // nunca dependa de un campo ausente.
+    const pEnt = tot ? ent/tot : (row.efLineas||0);
+    const pPen = tot ? pen/tot : (row.pendLineas||0);
+    return [
+      {label:'% Líneas entregadas', value: pEnt, color:'#1E8F5E'},
+      {label:'% Líneas pendientes', value: pPen, color:'#D98A2B'}
+    ];
+  }, {
     centerFn:(slices)=>{
-      const ef = slices.find(s=>s.label==='% Eficiencia (entregadas)');
+      const ef = slices.find(s=>s.label==='% Líneas entregadas');
       return fmtPct(ef ? ef.value : null);
+    },
+    // Nota con las cantidades que sustentan los porcentajes mostrados.
+    notaFn:(row)=>{
+      const tot=row.lineas||0;
+      if(!tot) return 'Sin líneas en el alcance seleccionado.';
+      return 'Total líneas: '+fmtInt(tot)+' · entregadas: '+fmtInt(row.lineasEnt||0)+' · pendientes: '+fmtInt(row.lineasPen||0);
     }
   });
 
