@@ -808,23 +808,13 @@ footer.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);fo
 
       <!-- ---- SUBVISTA: SOPORTE EVENTO ---- -->
       <div class="subview" id="sub-soporte">
-        <div style="margin-bottom:14px;">
+        <div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-ghost" data-open-periodico="soporte">📊 Reporte Comparativo Periódico</button>
+          <button class="btn btn-export" id="btnSoporteExportXlsx" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar soporte evento (Excel)</button>
+          <button class="btn btn-export" id="btnSoporteExportCsv" style="background:var(--blue-deep);box-shadow:0 2px 0 #05365F;">⬇ Descargar soporte evento (CSV)</button>
         </div>
+        <p class="seg-desc" id="soporteAlcanceTxt" style="margin:-6px 0 12px;"></p>
         <div class="stat-row" id="statsSoporte"></div>
-
-        <div class="chart-row" id="cmpSoporteRow" style="grid-template-columns:1fr 1fr;display:none;">
-          <div class="chart-card">
-            <h4>Soporte · Primer cargue</h4>
-            <svg id="cmpSoporteInicial" width="200" height="200" viewBox="0 0 200 200"></svg>
-            <div class="legend" id="cmpSoporteInicialLegend"></div>
-          </div>
-          <div class="chart-card">
-            <h4>Soporte · Último cargue</h4>
-            <svg id="cmpSoporteActual" width="200" height="200" viewBox="0 0 200 200"></svg>
-            <div class="legend" id="cmpSoporteActualLegend"></div>
-          </div>
-        </div>
 
         <div class="chart-row">
           <div class="chart-card">
@@ -4737,8 +4727,9 @@ function renderInfoPorFactura(){
 // (línea base) contra la última versión cargada se ven los avances del periodo.
 function renderComparativos(rows){
   const hayCargues = !!(state.processed && state.processed.hasCargues && rows && rows.length);
-  ['cmpDispensaRow','cmpLineaRow','cmpSoporteRow'].forEach(id=>{
-    document.getElementById(id).style.display = hayCargues ? 'grid' : 'none';
+  ['cmpDispensaRow','cmpLineaRow'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.style.display = hayCargues ? 'grid' : 'none';
   });
   if(!hayCargues) return;
 
@@ -4782,37 +4773,16 @@ function renderComparativos(rows){
   document.getElementById('cmpLineaActualLegend').innerHTML = `
     <div class="item"><span class="sw" style="background:#1E8F5E;"></span>Entregadas<span class="val">${fmtInt(lineasEntDespues)}</span></div>
     <div class="item"><span class="sw" style="background:#D98A2B;"></span>Pendientes<span class="val">${fmtInt(lineasTotal-lineasEntDespues)}</span></div>`;
-
-  // --- Soporte Evento: dispensas de EVENTO con/sin soporte, antes vs después ---
-  // Universo COMÚN (todas las dispensas de evento del periodo): así los soportes
-  // recuperados solo pueden sumar y los faltantes solo pueden bajar.
-  const eventoAntes = base.snap.filter(r=>r.contrato==='EVENTO' && r.documento);
-  const eventoDespues = actual.snap.filter(r=>r.contrato==='EVENTO' && r.documento);
-  const eventoTotalSet = new Set(eventoDespues.map(r=>r.documento));
-  const conSopAntes = new Set(eventoAntes.filter(r=>tieneSoporteHastaCorte(r,0)).map(r=>r.documento)).size;
-  const sinSopAntes = eventoTotalSet.size - conSopAntes;
-  const conSopDespues = new Set(eventoDespues.filter(r=>tieneSoporteHastaCorte(r,3)).map(r=>r.documento)).size;
-  const sinSopDespues = eventoTotalSet.size - conSopDespues;
-  drawDonut('cmpSoporteInicial', [
-    {label:'Con soporte', value: conSopAntes, color:'#0B5FA5'},
-    {label:'Sin soporte', value: sinSopAntes, color:'#D98A2B'}
-  ], fmtInt(conSopAntes));
-  document.getElementById('cmpSoporteInicialLegend').innerHTML = `
-    <div class="item"><span class="sw" style="background:#0B5FA5;"></span>Con soporte<span class="val">${fmtInt(conSopAntes)}</span></div>
-    <div class="item"><span class="sw" style="background:#D98A2B;"></span>Sin soporte<span class="val">${fmtInt(sinSopAntes)}</span></div>`;
-  drawDonut('cmpSoporteActual', [
-    {label:'Con soporte', value: conSopDespues, color:'#0B5FA5'},
-    {label:'Sin soporte', value: sinSopDespues, color:'#D98A2B'}
-  ], fmtInt(conSopDespues));
-  document.getElementById('cmpSoporteActualLegend').innerHTML = `
-    <div class="item"><span class="sw" style="background:#0B5FA5;"></span>Con soporte<span class="val">${fmtInt(conSopDespues)}</span></div>
-    <div class="item"><span class="sw" style="background:#D98A2B;"></span>Sin soporte<span class="val">${fmtInt(sinSopDespues)}</span></div>`;
 }
 
 /* =========================================================================
    9. Utilidad de agrupación
    ========================================================================= */
 let lastTables={dispensa:[], linea:[], soporte:[]};
+// Contexto del Indicador Soporte Evento: guarda el MISMO dataset ya filtrado por bodega
+// y zona, el estado acumulado por dispensa y el corte de trazabilidad usado en pantalla,
+// para que las descargas (CSV / Excel) entreguen exactamente lo que se esta viendo.
+let lastSoporteCtx=null;
 
 function groupByBodega(rows, bodegaSearch, zona){
   const g=new Map();
@@ -4825,6 +4795,16 @@ function groupByBodega(rows, bodegaSearch, zona){
   return Array.from(g.values()).sort((a,b)=>(a.zona+a.bodega).localeCompare(b.zona+b.bodega,'es'));
 }
 function sumField(arr, f){ return arr.reduce((a,b)=>a+(b[f]||0),0); }
+// Texto corto para las tarjetas: indica sobre cuantas bodegas / que filtro se calculo
+// el acumulado, para que se vea que las tarjetas siguen al selector de bodega.
+function describirAlcanceFiltro(table, bodegaSearch, zona){
+  const n = (table||[]).length;
+  const partes = [];
+  if(bodegaSearch) partes.push('bodega «'+bodegaSearch+'»');
+  if(zona) partes.push('zona '+zona);
+  const base = n===1 ? (table[0].bodega||'1 bodega') : fmtInt(n)+' bodegas';
+  return partes.length ? (base+' · filtro: '+partes.join(' + ')) : (base+' (todas)');
+}
 
 /* =========================================================================
    10. Indicador de Dispensa (1.1 - 1.13)
@@ -5415,11 +5395,15 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
     let lineas=0, lineasEnt=0, lineasPen=0, sinHomologar=0;
     let molParetoPend=0, paretoAgotado=0, molNoParetoPend=0, noParetoAgotado=0;
     let cantPuntoPareto=0, cantBodegaPareto=0, cantPuntoNoPareto=0, cantBodegaNoPareto=0;
+    // pendAgotadas: todas las lineas pendientes con molecula AGOTADA (incluidas las
+    // sin clasificacion Pareto), se usa para las tarjetas resumen de esta bodega.
+    let pendAgotadas=0;
     rs.forEach(r=>{
       lineas++;
       if(r.lineaPendiente==='NO'){ lineasEnt++; return; }
       lineasPen++;
       const agotado = r.estado==='TECNOLOGIA EN SALUD AGOTADO';
+      if(agotado) pendAgotadas++;
       if(r.moleculaPareto==='PARETO'){
         molParetoPend++;
         if(agotado) paretoAgotado++;
@@ -5445,7 +5429,7 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
     const efBodegaNoPareto = molNoParetoPend ? cantBodegaNoPareto/molNoParetoPend : null;
     const efFinalNoPareto = (efPuntoNoPareto||0)+(efBodegaNoPareto||0);
     const pctComprasNoPareto = molNoParetoPend ? Math.max(0, 1-efFinalNoPareto) : null;
-    return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen, sinHomologar,
+    return { zona:g.zona, bodega:g.bodega, lineas, lineasEnt, lineasPen, sinHomologar, pendAgotadas,
       molParetoPend, paretoAgotado, molNoParetoPend, noParetoAgotado, totalAgotadas, pctCierre,
       cantPuntoPareto, cantBodegaPareto, efPuntoPareto, efBodegaPareto, efFinalPareto, pctComprasPareto,
       cantPuntoNoPareto, cantBodegaNoPareto, efPuntoNoPareto, efBodegaNoPareto, efFinalNoPareto, pctComprasNoPareto };
@@ -5463,12 +5447,18 @@ function renderIndicadorLinea(rowsAllRaw, bodegaSearch, zona){
 
   pintarTablaLinea();
 
-  const totalPend=rowsAll.filter(r=>r.lineaPendiente==='SI').length;
-  const totalAgot=rowsAll.filter(r=>r.lineaPendiente==='SI' && r.estado==='TECNOLOGIA EN SALUD AGOTADO').length;
+  // Las tarjetas se calculan SOBRE LA MISMA TABLA ya filtrada (bodega + zona), así al
+  // cambiar el buscador de bodega o la zona los acumulados se recalculan igual que la
+  // tabla y los gráficos, y coinciden con la fila TOTAL.
+  const totalPend = sumField(table,'lineasPen');
+  const totalAgot = sumField(table,'pendAgotadas');
+  const totalPareto = sumField(table,'molParetoPend');
+  const totalNoPareto = sumField(table,'molNoParetoPend');
+  const alcanceLinea = describirAlcanceFiltro(table, bodegaSearch, zona);
   document.getElementById('statsLinea').innerHTML = `
-    <div class="stat"><div class="label">Líneas pendientes</div><div class="value">${fmtInt(totalPend)}</div><div class="sub">${fmtInt(totalAgot)} por molécula agotada</div></div>
-    <div class="stat"><div class="label">Pareto pendientes</div><div class="value">${fmtInt(rowsAll.filter(r=>r.lineaPendiente==='SI'&&r.moleculaPareto==='PARETO').length)}</div></div>
-    <div class="stat"><div class="label">No Pareto pendientes</div><div class="value">${fmtInt(rowsAll.filter(r=>r.lineaPendiente==='SI'&&r.moleculaPareto==='NO PARETO').length)}</div></div>
+    <div class="stat"><div class="label">Líneas pendientes</div><div class="value">${fmtInt(totalPend)}</div><div class="sub">${fmtInt(totalAgot)} por molécula agotada · ${alcanceLinea}</div></div>
+    <div class="stat"><div class="label">Pareto pendientes</div><div class="value">${fmtInt(totalPareto)}</div><div class="sub">${alcanceLinea}</div></div>
+    <div class="stat"><div class="label">No Pareto pendientes</div><div class="value">${fmtInt(totalNoPareto)}</div><div class="sub">${alcanceLinea}</div></div>
   `;
 
   // ---- gráfico de pastel: % Eficiencia de Líneas Entregadas vs % Índice de Líneas Pendientes ----
@@ -5693,35 +5683,65 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
 function renderIndicadorSoporteEvento(rowsEventoRaw, bodegaSearch, zona){
   // Solo dispensas con Estado Activo (se excluyen las INACTIVO).
   const rowsEvento = soloActivas(rowsEventoRaw);
-  // ---- resumen GLOBAL evento: solo dispensas ENTREGADAS (efectivas) ----
+  // BASE UNICA del indicador: dispensas de evento ENTREGADAS, ya filtradas por el
+  // buscador de bodega y por zona. Todo (tarjetas, tabla, dona y descargas) se calcula
+  // sobre esta misma base para que las cifras siempre coincidan entre si.
   const rowsEntregadas = rowsEvento.filter(r=>r.pendienteDispensa==='NO');
-  const totalEnt = new Set(rowsEntregadas.map(r=>r.dispensaYPunto)).size;
-  const conSoporte = new Set(rowsEntregadas.filter(r=>r.tieneSoportes==='TIENE SOPORTE').map(r=>r.dispensaYPunto)).size;
-  const sinSoporte = new Set(rowsEntregadas.filter(r=>r.tieneSoportes==='NO TIENE SOPORTES').map(r=>r.dispensaYPunto)).size;
+  const groups = groupByBodega(rowsEntregadas, bodegaSearch, zona);
+  const rowsBase = groups.reduce((acc,g)=>acc.concat(g.rows), []);
+  // Corte de trazabilidad: el corte global de los filtros, ajustado al ultimo corte con
+  // cargue real dentro de la base filtrada. El soporte es ACUMULATIVO: una dispensa que
+  // ya llego con soporte en un corte anterior o igual sigue contando como "con soporte".
+  const corteGlobalSop = getCorteGlobal();
+  const corteFinalSop = corteVigenteHasta(cortesConCargue(rowsBase), corteGlobalSop);
+  const etqCorteSop = corteFinalSop===0 ? 'línea base' : 'corte '+corteFinalSop;
+  // Estado por dispensa (bodega + documento) acumulado hasta el corte.
+  const estadoDisp = new Map();
+  rowsBase.forEach(r=>{
+    const k = r.dispensaYPunto;
+    if(!k) return;
+    const con = tieneSoporteHastaCorte(r, corteFinalSop);
+    if(!estadoDisp.has(k)) estadoDisp.set(k, con);
+    else if(con) estadoDisp.set(k, true);   // acumulativo: no vuelve atras
+  });
+  let totalEnt=0, conSoporte=0;
+  estadoDisp.forEach(v=>{ totalEnt++; if(v) conSoporte++; });
+  const sinSoporte = totalEnt - conSoporte;
+  const alcanceSop = describirAlcanceFiltro(groups.map(g=>({bodega:g.bodega})), bodegaSearch, zona);
+  const subAlcance = alcanceSop+' · acumulado a '+etqCorteSop;
   document.getElementById('statsSoporte').innerHTML = `
-    <div class="stat"><div class="label">Dispensas entregadas (Evento)</div><div class="value">${fmtInt(totalEnt)}</div></div>
-    <div class="stat"><div class="label">Entregado con soporte</div><div class="value">${fmtInt(conSoporte)}</div><div class="sub">${fmtPct(totalEnt?conSoporte/totalEnt:null)}</div>
+    <div class="stat"><div class="label">Dispensas entregadas (Evento)</div><div class="value">${fmtInt(totalEnt)}</div><div class="sub">${subAlcance}</div></div>
+    <div class="stat"><div class="label">Entregado con soporte</div><div class="value">${fmtInt(conSoporte)}</div><div class="sub">${fmtPct(totalEnt?conSoporte/totalEnt:null)} · ${subAlcance}</div>
       <div class="bar"><i style="width:${totalEnt?(conSoporte/totalEnt*100).toFixed(0):0}%;"></i></div></div>
-    <div class="stat warn"><div class="label">Entregado sin soporte</div><div class="value">${fmtInt(sinSoporte)}</div><div class="sub">${fmtPct(totalEnt?sinSoporte/totalEnt:null)}</div>
+    <div class="stat warn"><div class="label">Entregado sin soporte</div><div class="value">${fmtInt(sinSoporte)}</div><div class="sub">${fmtPct(totalEnt?sinSoporte/totalEnt:null)} · ${subAlcance}</div>
       <div class="bar"><i style="width:${totalEnt?(sinSoporte/totalEnt*100).toFixed(0):0}%;"></i></div></div>
   `;
 
-  // ---- por bodega: solo entregadas ----
-  const groups=groupByBodega(rowsEntregadas, bodegaSearch, zona);
+  // ---- por bodega: misma base filtrada y mismo corte acumulativo ----
   const table=groups.map(g=>{
-    const rs=g.rows;
-    const entSet=new Set(), entConSet=new Set(), entSinSet=new Set();
-    rs.forEach(r=>{
-      if(!r.documento) return;
-      entSet.add(r.documento);
-      if(r.tieneSoportes==='TIENE SOPORTE') entConSet.add(r.documento); else entSinSet.add(r.documento);
+    const estado=new Map();
+    g.rows.forEach(r=>{
+      const k=r.dispensaYPunto;
+      if(!k) return;
+      const con=tieneSoporteHastaCorte(r, corteFinalSop);
+      if(!estado.has(k)) estado.set(k, con);
+      else if(con) estado.set(k, true);
     });
-    const ent=entSet.size, entCon=entConSet.size, entSin=entSinSet.size;
+    let ent=0, entCon=0;
+    estado.forEach(v=>{ ent++; if(v) entCon++; });
+    const entSin = ent-entCon;
     return { zona:g.zona, bodega:g.bodega, ent, entCon, entSin,
       efEnt: ent? entCon/ent: null };
   });
   table.sort((a,b)=>(a.efEnt||0)-(b.efEnt||0));
   lastTables.soporte=table;
+  // Contexto para las descargas: mismo dataset filtrado + corte de trazabilidad.
+  lastSoporteCtx={ rows:rowsBase, estadoDisp, corteFinal:corteFinalSop, corteGlobal:corteGlobalSop,
+    etqCorte:etqCorteSop, alcance:alcanceSop, bodegaSearch, zona };
+  const txtAlcance=document.getElementById('soporteAlcanceTxt');
+  if(txtAlcance) txtAlcance.innerHTML = '<b>Alcance de este indicador y de sus descargas:</b> '+alcanceSop
+    + ' · estado <b>acumulado a '+etqCorteSop+'</b> (corte global '+corteGlobalSop+'). '
+    + 'Las tarjetas, la gráfica, la tabla y los archivos descargados usan el mismo conjunto de datos.';
   pintarTablaSoporte();
 
   // ---- gráfico de pastel: % Con soporte vs Sin soporte (de las entregadas) ----
@@ -5740,6 +5760,97 @@ function renderIndicadorSoporteEvento(rowsEventoRaw, bodegaSearch, zona){
     }
   });
 }
+
+// ---- Detalle descargable del Indicador Soporte Evento --------------------
+// Construye UNA fila por dispensa a partir del MISMO contexto que se ve en pantalla
+// (base filtrada por bodega/zona + estado acumulado hasta el corte vigente).
+function construirDetalleSoporteEvento(){
+  if(!lastSoporteCtx || !lastSoporteCtx.rows || !lastSoporteCtx.rows.length) return [];
+  const ctx=lastSoporteCtx;
+  const porDisp=new Map();
+  ctx.rows.forEach(r=>{
+    const k=r.dispensaYPunto;
+    if(!k) return;
+    const prev=porDisp.get(k);
+    // Se conserva la version mas reciente de la dispensa (ultimo cargue) para los datos de
+    // referencia; el estado con/sin soporte viene del acumulado del indicador.
+    if(!prev || esVersionPosterior(r, prev)) porDisp.set(k, r);
+  });
+  const det=[];
+  porDisp.forEach((r,k)=>{
+    const con = ctx.estadoDisp.get(k)===true;
+    const corteRec = con ? corteRecuperacionSoporte(r) : null;
+    det.push({
+      'Zona': r.zona||'',
+      'Bodega': r.bodegaDetalle||'',
+      'Documento': r.documento||'',
+      'Contrato': r.contrato||'',
+      'Estado dispensa': r.estadoDispensa||'',
+      'Estado soporte': con ? 'CON SOPORTE' : 'SIN SOPORTE',
+      'Estado al': ctx.etqCorte,
+      'Corte global filtrado': ctx.corteGlobal,
+      'Corte en que llego el soporte': con ? (corteRec===null ? 'Linea base' : 'Corte '+corteRec) : '',
+      'Fecha de soporte': con ? diaSoporte(r) : '',
+      'Fecha del ultimo cargue': diaCargue(r)
+    });
+  });
+  det.sort((a,b)=> String(a['Bodega']).localeCompare(String(b['Bodega']),'es')
+    || String(a['Estado soporte']).localeCompare(String(b['Estado soporte']))
+    || String(a['Documento']).localeCompare(String(b['Documento'])));
+  return det;
+}
+
+// Resumen por bodega tal como se muestra en la tabla, con la marca del corte usado.
+function construirResumenSoporteEvento(){
+  const etq = lastSoporteCtx ? lastSoporteCtx.etqCorte : '';
+  const cg = lastSoporteCtx ? lastSoporteCtx.corteGlobal : '';
+  return (lastTables.soporte||[]).map(t=>({
+    'Zona':t.zona,'Bodega':t.bodega,'Dispensas Entregadas':t.ent,'Con Soporte':t.entCon,'Sin Soporte':t.entSin,
+    'Indicador Eficiencia Soporte':t.efEnt,'Estado al':etq,'Corte global filtrado':cg
+  }));
+}
+
+function hayContextoSoporte(){
+  if(lastSoporteCtx && lastSoporteCtx.rows && lastSoporteCtx.rows.length) return true;
+  showToast('No hay datos de Soporte Evento para descargar con los filtros actuales.', true);
+  return false;
+}
+
+(function initDescargasSoporteEvento(){
+  const bx=document.getElementById('btnSoporteExportXlsx');
+  const bc=document.getElementById('btnSoporteExportCsv');
+  const fecha=()=>new Date().toISOString().slice(0,10);
+  if(bx) bx.addEventListener('click', ()=>{
+    if(!hayContextoSoporte()) return;
+    const resumen=construirResumenSoporteEvento();
+    const detalle=construirDetalleSoporteEvento();
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen.length?resumen:[{'Sin datos':''}]), 'RESUMEN POR BODEGA');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle.length?detalle:[{'Sin datos':''}]), 'DETALLE POR DISPENSA');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{
+      'Alcance': lastSoporteCtx.alcance,
+      'Estado al': lastSoporteCtx.etqCorte,
+      'Corte global filtrado': lastSoporteCtx.corteGlobal,
+      'Filtro de bodega': lastSoporteCtx.bodegaSearch || '(todas)',
+      'Zona': lastSoporteCtx.zona || '(todas)',
+      'Dispensas incluidas': detalle.length
+    }]), 'ALCANCE');
+    XLSX.writeFile(wb, `Soporte_Evento_${fecha()}.xlsx`);
+    showToast('Excel de Soporte Evento descargado.');
+  });
+  if(bc) bc.addEventListener('click', ()=>{
+    if(!hayContextoSoporte()) return;
+    const detalle=construirDetalleSoporteEvento();
+    if(!detalle.length){ showToast('No hay dispensas de Soporte Evento en el filtro actual.', true); return; }
+    const cols=Object.keys(detalle[0]);
+    const esc=v=>{ const s=(v==null?'':String(v)); return /[";\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+    const lineas=[cols.join(';')].concat(detalle.map(d=>cols.map(c=>esc(d[c])).join(';')));
+    // BOM para que Excel reconozca los acentos al abrir el CSV.
+    const blob=new Blob(['\ufeff'+lineas.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    descargarArchivo(`Soporte_Evento_${fecha()}.csv`, blob);
+    showToast('CSV de Soporte Evento descargado.');
+  });
+})();
 
 /* =========================================================================
    13. Exportar a Excel
@@ -5767,11 +5878,13 @@ document.getElementById('btnExportar').addEventListener('click', ()=>{
   })));
   XLSX.utils.book_append_sheet(wb, wsL, 'INDICADOR POR LINEA (SUBSANAR)');
 
-  const wsS=XLSX.utils.json_to_sheet(lastTables.soporte.map(t=>({
-    'Zona':t.zona,'Bodega':t.bodega,'Dispensas Entregadas':t.ent,'Con Soporte':t.entCon,'Sin Soporte':t.entSin,
-    'Indicador Eficiencia Soporte':t.efEnt
-  })));
+  // Mismo dataset filtrado y mismo corte acumulativo que se ve en pantalla.
+  const wsS=XLSX.utils.json_to_sheet(construirResumenSoporteEvento());
   XLSX.utils.book_append_sheet(wb, wsS, 'INDICADOR SOPORTE EVENTO');
+  const detSop=construirDetalleSoporteEvento();
+  if(detSop.length){
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detSop), 'SOPORTE EVENTO DETALLE');
+  }
 
   // --- Seguimiento de Dispensación por Bodega (cargue vs cargue) ---
   if(state.processed && filteredRowsCache.length){
